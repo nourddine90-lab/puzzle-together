@@ -6,18 +6,21 @@ import { click, chime, unlockAudio } from './sound.js';
  *   rooms/<CODE>/meta    { cols, rows, w, h, seed, created, by }
  *   rooms/<CODE>/image   JPEG data URL (max 1600px)
  *   rooms/<CODE>/pieces  [ groupId per piece ]
- *   rooms/<CODE>/groups  { groupId: {x, y} }   x,y = where the picture's top-left corner would be
+ *   rooms/<CODE>/groups  { groupId: {x, y, rot} }   x,y = where the picture's top-left corner would be; rot = 0/90/180/270
  *   rooms/<CODE>/players { uid: {name, color} }
  *   rooms/<CODE>/holds   { groupId: {uid, name, color} }   who is dragging what
  *
  * Because every group stores the position of the picture's corner, two neighbouring
  * groups fit together exactly when their positions are equal. Snapping = comparing two points.
+ * Pieces also start rotated (0/90/180/270°) and only snap once turned upright (rot === 0);
+ * double-tap/double-click a loose piece to rotate it 90°.
  */
 
 const $ = (id) => document.getElementById(id);
 const COUNTS = [50, 100, 150, 200, 300, 500];
 const COLORS = ['#ff5c8a', '#4cc9f0', '#ffd166', '#06d6a0', '#b388ff', '#ff9f43'];
 const CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+const ROTS = [0, 90, 180, 270];
 
 let store;
 let me = readJSON('pt-me');
@@ -199,7 +202,7 @@ $('create').onclick = async () => {
         } while (x > -pw && x < W && y > -ph && y < H);
         const i = r * cols + c;
         pieces[i] = 'g' + i;
-        groups['g' + i] = { x: Math.round(x - c * pw), y: Math.round(y - r * ph) };
+        groups['g' + i] = { x: Math.round(x - c * pw), y: Math.round(y - r * ph), rot: ROTS[(rnd() * 4) | 0] };
       }
     }
     const code = newCode();
@@ -212,6 +215,7 @@ $('create').onclick = async () => {
     });
     remember(code, { thumb: pick.thumb, n: cols * rows, pct: 0 });
     await openRoom(code);
+    toast('🔄 Pieces start crooked — double-tap one to turn it upright', 4000);
   } catch (err) {
     console.error(err);
     toast('Could not create: ' + err.message, 4000);
@@ -324,12 +328,20 @@ function startGame(code, data, img) {
   stage.add(bg, G.layer, G.top);
   $('ghost').classList.remove('on');
 
-  for (const [id, pos] of Object.entries(data.groups || {})) model(id).pos = pos;
+  for (const [id, v] of Object.entries(data.groups || {})) {
+    const g = model(id);
+    g.pos = { x: v.x, y: v.y };
+    g.rot = v.rot || 0;
+  }
   const m = S * 0.34;
   for (let i = 0; i < n; i++) {
     const r = (i / cols) | 0, c = i % cols;
     const shape = new Konva.Shape({
-      x: c * pw, y: r * ph,
+      // x/y + offset put the rotation pivot at the piece's own centre; at rot=0 this
+      // renders exactly where the old (c*pw, r*ph) placement did.
+      x: c * pw + pw / 2, y: r * ph + ph / 2,
+      offsetX: pw / 2, offsetY: ph / 2,
+      rotation: model(data.pieces[i]).rot || 0,
       sceneFunc: (ctx, s) => { piecePath(ctx, r, c); ctx.fillStrokeShape(s); },
       fillPatternImage: img,
       fillPatternOffset: { x: c * pw, y: r * ph },
@@ -338,6 +350,7 @@ function startGame(code, data, img) {
       perfectDrawEnabled: false,
     });
     shape.cache({ x: -m, y: -m, width: pw + 2 * m, height: ph + 2 * m, pixelRatio: 1 });
+    shape.on('dblclick dbltap', () => rotatePiece(i));
     G.shapes[i] = shape;
     attach(i, data.pieces[i]);
   }
@@ -360,8 +373,22 @@ function startGame(code, data, img) {
 
 function model(id) {
   let g = G.groups.get(id);
-  if (!g) { g = { id, pos: { x: 0, y: 0 }, members: new Set(), node: null }; G.groups.set(id, g); }
+  if (!g) { g = { id, pos: { x: 0, y: 0 }, rot: 0, members: new Set(), node: null }; G.groups.set(id, g); }
   return g;
+}
+
+const isUpright = (g) => !g || (g.rot || 0) === 0;
+
+// Only a loose (unsnapped) piece can be rotated — once joined to neighbours a
+// group is always already upright and stays that way.
+function rotatePiece(i) {
+  const gid = G.pieceGroup[i];
+  const g = model(gid);
+  if (g.members.size > 1) return;
+  g.rot = ((g.rot || 0) + 90) % 360;
+  for (const mi of g.members) G.shapes[mi]?.rotation(g.rot);
+  commit({ ['groups/' + gid]: { x: g.pos.x, y: g.pos.y, rot: g.rot } });
+  if (g.rot === 0) { trySnap(gid); updateProgress(); }
 }
 
 function nodeOf(id) {
@@ -408,7 +435,7 @@ function wire(node, id) {
     const t = performance.now();
     if (t - last < 70) return;
     last = t;
-    store.update(G.code, { ['groups/' + id]: posOf(node) });
+    store.update(G.code, { ['groups/' + id]: { ...posOf(node), rot: model(id).rot || 0 } });
   });
   node.on('dragend', () => {
     if (G.dragId === id) G.dragId = null;
@@ -434,29 +461,33 @@ function commit(patch) {
 function trySnap(gid) {
   const { cols, rows } = G;
   let cur = gid, snapped = false;
-  for (;;) {
-    const g = G.groups.get(cur);
-    const gx = g.node.x(), gy = g.node.y();
-    let target = null;
-    for (const i of g.members) {
-      const r = (i / cols) | 0, c = i % cols;
-      for (const [dr, dc] of [[-1, 0], [1, 0], [0, -1], [0, 1]]) {
-        const rr = r + dr, cc = c + dc;
-        if (rr < 0 || cc < 0 || rr >= rows || cc >= cols) continue;
-        const h = G.pieceGroup[rr * cols + cc];
-        if (h === cur || heldByOther(h)) continue;
-        const hn = G.groups.get(h)?.node;
-        if (hn && Math.hypot(hn.x() - gx, hn.y() - gy) < G.snap) { target = h; break; }
+  if (isUpright(G.groups.get(cur))) {
+    for (;;) {
+      const g = G.groups.get(cur);
+      const gx = g.node.x(), gy = g.node.y();
+      let target = null;
+      for (const i of g.members) {
+        const r = (i / cols) | 0, c = i % cols;
+        for (const [dr, dc] of [[-1, 0], [1, 0], [0, -1], [0, 1]]) {
+          const rr = r + dr, cc = c + dc;
+          if (rr < 0 || cc < 0 || rr >= rows || cc >= cols) continue;
+          const h = G.pieceGroup[rr * cols + cc];
+          if (h === cur || heldByOther(h)) continue;
+          const hg = G.groups.get(h);
+          if (!isUpright(hg)) continue;
+          const hn = hg?.node;
+          if (hn && Math.hypot(hn.x() - gx, hn.y() - gy) < G.snap) { target = h; break; }
+        }
+        if (target) break;
       }
-      if (target) break;
+      if (!target) break;
+      const patch = {};
+      for (const i of g.members) patch['pieces/' + i] = target;
+      patch['groups/' + cur] = null;
+      commit(patch);
+      cur = target;
+      snapped = true;
     }
-    if (!target) break;
-    const patch = {};
-    for (const i of g.members) patch['pieces/' + i] = target;
-    patch['groups/' + cur] = null;
-    commit(patch);
-    cur = target;
-    snapped = true;
   }
   const g = G.groups.get(cur);
   const n = g.node;
@@ -464,12 +495,12 @@ function trySnap(gid) {
     const r = (i / cols) | 0, c = i % cols;
     return r === 0 || c === 0 || r === rows - 1 || c === cols - 1;
   });
-  if (onBorder && (n.x() || n.y()) && Math.hypot(n.x(), n.y()) < G.snap) {
+  if (isUpright(g) && onBorder && (n.x() || n.y()) && Math.hypot(n.x(), n.y()) < G.snap) {
     n.position({ x: 0, y: 0 });
     snapped = true;
   }
   n.position(posOf(n));
-  commit({ ['groups/' + cur]: posOf(n) });
+  commit({ ['groups/' + cur]: { ...posOf(n), rot: g.rot || 0 } });
   if (snapped) click();
   return cur;
 }
@@ -484,6 +515,11 @@ function onGroup(id, v) {
   }
   const g = model(id);
   g.pos = { x: v.x, y: v.y };
+  const newRot = v.rot || 0;
+  if ((g.rot || 0) !== newRot) {
+    g.rot = newRot;
+    for (const mi of g.members) G.shapes[mi]?.rotation(newRot); // e.g. the other player rotated this piece
+  }
   if (!g.node || G.dragId === id) return;
   if (g.node.x() === v.x && g.node.y() === v.y) return;
   g.node.moveToTop();
@@ -559,11 +595,14 @@ function zoomAt(f, cx = innerWidth / 2, cy = innerHeight / 2) {
 function fit() {
   let x0 = 0, y0 = 0, x1 = G.W, y1 = G.H;
   for (let i = 0; i < G.n; i++) {
-    const n = G.groups.get(G.pieceGroup[i])?.node;
+    const gid = G.pieceGroup[i];
+    const n = G.groups.get(gid)?.node;
     if (!n) continue;
-    const x = n.x() + (i % G.cols) * G.pw, y = n.y() + ((i / G.cols) | 0) * G.ph;
-    x0 = Math.min(x0, x); y0 = Math.min(y0, y);
-    x1 = Math.max(x1, x + G.pw); y1 = Math.max(y1, y + G.ph);
+    const cx = n.x() + (i % G.cols) * G.pw + G.pw / 2, cy = n.y() + ((i / G.cols) | 0) * G.ph + G.ph / 2;
+    const rot90 = ((G.groups.get(gid).rot || 0) / 90) % 2 !== 0; // 90°/270° swap width and height
+    const hw = (rot90 ? G.ph : G.pw) / 2, hh = (rot90 ? G.pw : G.ph) / 2;
+    x0 = Math.min(x0, cx - hw); y0 = Math.min(y0, cy - hh);
+    x1 = Math.max(x1, cx + hw); y1 = Math.max(y1, cy + hh);
   }
   const top = 64, pad = 12;
   const vw = innerWidth - pad * 2, vh = innerHeight - top - pad * 2;
