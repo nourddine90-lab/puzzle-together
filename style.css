@@ -1,0 +1,103 @@
+:root {
+  --bg: #1d1a2b;
+  --card: #2a2540;
+  --ink: #f4f0ff;
+  --muted: #a79fc4;
+  --accent: #ff5c8a;
+  --line: rgba(255, 255, 255, .12);
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html, body {
+  margin: 0; height: 100%;
+  background: var(--bg); color: var(--ink);
+  font: 16px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  -webkit-tap-highlight-color: transparent;
+  overscroll-behavior: none;
+}
+[hidden] { display: none !important; }
+button {
+  font: inherit; color: inherit; cursor: pointer;
+  background: var(--card); border: 1px solid var(--line);
+  border-radius: 12px; padding: 10px 14px;
+}
+button.primary { width: 100%; background: var(--accent); border-color: transparent; font-weight: 600; }
+button:disabled { opacity: .45; cursor: default; }
+input {
+  font: inherit; color: inherit; width: 100%;
+  background: #1a1726; border: 1px solid var(--line);
+  border-radius: 12px; padding: 10px 12px;
+}
+
+/* ---------- home ---------- */
+#home { max-width: 520px; margin: 0 auto; padding: 24px 16px 40px; }
+h1 { margin: 8px 0 0; font-size: 28px; }
+.sub { color: var(--muted); margin: 4px 0 18px; cursor: pointer; }
+.card { background: var(--card); border-radius: 18px; padding: 16px; margin-bottom: 14px; }
+.card h2 { margin: 0 0 12px; font-size: 18px; }
+.hint { color: var(--muted); font-size: 14px; margin: 14px 0 0; }
+.file {
+  display: block; text-align: center; cursor: pointer; color: var(--muted);
+  border: 2px dashed var(--line); border-radius: 14px; padding: 18px;
+}
+.file input { display: none; }
+#preview { display: block; max-width: 100%; max-height: 180px; margin: 12px auto 0; border-radius: 10px; }
+.counts { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin: 8px 0 14px; }
+.counts button.on { background: var(--accent); border-color: transparent; font-weight: 600; }
+.row { display: flex; gap: 8px; }
+.row input { text-transform: uppercase; letter-spacing: .2em; }
+#list { list-style: none; margin: 0; padding: 0; }
+#list li { display: flex; align-items: center; gap: 12px; padding: 8px; border-radius: 12px; cursor: pointer; }
+#list li:hover { background: rgba(255, 255, 255, .04); }
+#list img { width: 56px; height: 56px; object-fit: cover; border-radius: 10px; background: #111; }
+#list div { flex: 1; min-width: 0; }
+#list small { display: block; color: var(--muted); }
+#list .x { background: none; border: none; color: var(--muted); padding: 8px; }
+.empty { color: var(--muted); }
+.mode { text-align: center; color: var(--muted); font-size: 13px; }
+
+/* ---------- game ---------- */
+#game { position: fixed; inset: 0; }
+#stage {
+  position: absolute; inset: 0; touch-action: none;
+  background: radial-gradient(circle at 50% 40%, #2d2745, #14111d);
+}
+.bar {
+  position: absolute; top: 0; left: 0; right: 0;
+  display: flex; align-items: center; gap: 10px;
+  padding: 8px 10px; padding-top: max(8px, env(safe-area-inset-top));
+  background: linear-gradient(#14111ddd, #14111d00);
+  pointer-events: none;
+}
+.bar > * { pointer-events: auto; }
+.icon {
+  width: 44px; height: 44px; padding: 0; border-radius: 50%; font-size: 20px;
+  background: rgba(42, 37, 64, .85); backdrop-filter: blur(6px);
+}
+.info { flex: 1; display: flex; flex-direction: column; line-height: 1.15; min-width: 0; }
+.info b { letter-spacing: .12em; }
+.info span { font-size: 12px; color: var(--muted); }
+#players { display: flex; gap: 4px; }
+.chip {
+  width: 28px; height: 28px; border-radius: 50%;
+  display: grid; place-items: center;
+  font-size: 13px; font-weight: 700; color: #1d1a2b;
+}
+.tools {
+  position: absolute; right: 12px; bottom: max(16px, env(safe-area-inset-bottom));
+  display: flex; flex-direction: column; gap: 10px;
+}
+#ghost.on { background: var(--accent); }
+
+#toast {
+  position: fixed; left: 50%; bottom: 90px; transform: translateX(-50%); z-index: 30;
+  background: #000c; padding: 10px 16px; border-radius: 999px; font-size: 14px;
+  max-width: calc(100% - 32px); text-align: center;
+}
+.modal, #win { position: fixed; inset: 0; z-index: 20; display: grid; place-items: center; background: #0009; padding: 16px; }
+.modal .card, #win > div { width: 100%; max-width: 360px; text-align: center; }
+#win > div { background: var(--card); border-radius: 18px; padding: 24px; }
+#win h2 { font-size: 30px; margin: 0 0 6px; }
+#swatches { display: flex; justify-content: center; gap: 10px; margin: 14px 0; }
+#swatches button { width: 36px; height: 36px; border-radius: 50%; padding: 0; border: 3px solid transparent; }
+#swatches button.on { border-color: #fff; }

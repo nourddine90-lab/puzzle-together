@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+  <meta name="theme-color" content="#1d1a2b">
+  <title>Puzzle Together</title>
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icon-192.png">
+  <link rel="apple-touch-icon" href="icon-192.png">
+  <link rel="stylesheet" href="style.css">
+  <script src="konva.min.js"></script>
+</head>
+<body>
+
+<section id="home">
+  <h1>🧩 Puzzle Together</h1>
+  <p class="sub" id="who" title="Change name"></p>
+
+  <div class="card">
+    <h2>New puzzle</h2>
+    <label class="file"><input type="file" id="file" accept="image/*"><span id="fileLabel">📷 Choose a photo</span></label>
+    <img id="preview" alt="" hidden>
+    <p class="hint">How many pieces?</p>
+    <div class="counts" id="counts"></div>
+    <button id="create" class="primary" disabled>Create puzzle</button>
+  </div>
+
+  <div class="card">
+    <h2>Join a puzzle</h2>
+    <div class="row">
+      <input id="joinCode" placeholder="CODE" maxlength="6" autocomplete="off" autocapitalize="characters">
+      <button id="join">Join</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>My puzzles</h2>
+    <ul id="list"></ul>
+  </div>
+
+  <p class="mode" id="mode"></p>
+</section>
+
+<section id="game" hidden>
+  <div id="stage"></div>
+  <header class="bar">
+    <button id="back" class="icon" aria-label="Back">←</button>
+    <div class="info"><b id="roomCode"></b><span id="progress"></span></div>
+    <div id="players"></div>
+    <button id="share" class="icon" aria-label="Invite">💌</button>
+  </header>
+  <div class="tools">
+    <button id="ghost" class="icon" aria-label="Show picture">👁</button>
+    <button id="zoomIn" class="icon" aria-label="Zoom in">＋</button>
+    <button id="zoomOut" class="icon" aria-label="Zoom out">－</button>
+    <button id="fit" class="icon" aria-label="Fit">⤢</button>
+  </div>
+  <div id="win" hidden>
+    <div>
+      <h2>🎉 Bravo!</h2>
+      <p>You finished it together.</p>
+      <button id="winClose" class="primary">Admire it</button>
+    </div>
+  </div>
+</section>
+
+<div id="nameDlg" class="modal" hidden>
+  <div class="card">
+    <h2>Who's playing?</h2>
+    <input id="nameIn" placeholder="Your name" maxlength="16" autocomplete="off">
+    <div id="swatches"></div>
+    <button id="nameOk" class="primary">Let's go</button>
+  </div>
+</div>
+
+<div id="toast" hidden></div>
+
+<script type="module" src="app.js"></script>
+</body>
+</html>
