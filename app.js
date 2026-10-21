@@ -309,11 +309,19 @@ function toLineArt(img, maxSize = 1100) {
   const { data } = ctx.getImageData(0, 0, w, h);
 
   if (looksLikeLineArt(data)) {
-    const out = ctx.createImageData(w, h);
-    for (let p = 0, i = 0; p < data.length; p += 4, i += 4) {
+    let ink = new Uint8Array(w * h);
+    for (let p = 0, i = 0; p < data.length; p += 4, i++) {
       const lum = data[p] * 0.299 + data[p + 1] * 0.587 + data[p + 2] * 0.114;
-      const v = lum < 200 ? 0 : 255;
-      out.data[i] = v; out.data[i + 1] = v; out.data[i + 2] = v; out.data[i + 3] = 255;
+      ink[i] = lum < 200 ? 1 : 0;
+    }
+    // Close a stray 1px gap in the artwork's own outline — otherwise a fill can leak straight
+    // through it into the next shape (e.g. a beard bleeding into the face behind it).
+    ink = dilateMask(ink, w, h);
+    const out = ctx.createImageData(w, h);
+    for (let i = 0; i < ink.length; i++) {
+      const v = ink[i] ? 0 : 255;
+      const o = i * 4;
+      out.data[o] = v; out.data[o + 1] = v; out.data[o + 2] = v; out.data[o + 3] = 255;
     }
     ctx.putImageData(out, 0, 0);
     return c.toDataURL('image/png');
@@ -345,6 +353,22 @@ function toLineArt(img, maxSize = 1100) {
   }
   ctx.putImageData(out, 0, 0);
   return c.toDataURL('image/png');
+}
+// Grows a 0/1 ink mask by 1 pixel (4-neighbour), bridging hairline breaks in an outline.
+function dilateMask(mask, w, h) {
+  const out = new Uint8Array(mask.length);
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const i = y * w + x;
+      out[i] = mask[i]
+        || (x > 0 && mask[i - 1])
+        || (x < w - 1 && mask[i + 1])
+        || (y > 0 && mask[i - w])
+        || (y < h - 1 && mask[i + w])
+        ? 1 : 0;
+    }
+  }
+  return out;
 }
 function boxBlur(src, w, h) {
   const out = new Float32Array(src.length);
