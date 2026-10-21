@@ -2,18 +2,29 @@ import { createStore } from './store.js';
 import { click, chime, unlockAudio } from './sound.js';
 
 /*
- * Data model (same online and offline):
- *   rooms/<CODE>/meta    { cols, rows, w, h, seed, created, by }
- *   rooms/<CODE>/image   JPEG data URL (max 1600px)
- *   rooms/<CODE>/pieces  [ groupId per piece ]
- *   rooms/<CODE>/groups  { groupId: {x, y, rot} }   x,y = where the picture's top-left corner would be; rot = 0/90/180/270
- *   rooms/<CODE>/players { uid: {name, color} }
- *   rooms/<CODE>/holds   { groupId: {uid, name, color} }   who is dragging what
+ * Data model (same online and offline). Two kinds of room share one "rooms/<CODE>" record:
  *
- * Because every group stores the position of the picture's corner, two neighbouring
- * groups fit together exactly when their positions are equal. Snapping = comparing two points.
+ * Puzzle (meta.kind === 'puzzle', or missing for rooms made before kind existed):
+ *   meta    { kind, cols, rows, w, h, seed, created, by }
+ *   image   JPEG data URL (max 1600px)
+ *   pieces  [ groupId per piece ]
+ *   groups  { groupId: {x, y, rot} }   x,y = where the picture's top-left corner would be; rot = 0/90/180/270
+ * Because every group stores the position of the picture's corner, two neighbouring groups
+ * fit together exactly when their positions are equal. Snapping = comparing two points.
  * Pieces also start rotated (0/90/180/270°) and only snap once turned upright (rot === 0);
  * double-tap/double-click a loose piece to rotate it 90°.
+ *
+ * Coloring (meta.kind === 'color'):
+ *   meta     { kind, mode: 'fill'|'draw', image (picture id, fill only), w, h, created, by, clearSeq }
+ *   regions  { regionId: colorHex }                         — fill mode, one entry per painted region
+ *   strokes  { strokeId: {uid, color, width, points:[[x,y]]} } — draw mode, one entry per pen stroke
+ * "fill" pictures are static built-in assets (coloring/<id>.png): both phones load the same bytes
+ * and independently flood-fill it into numbered regions, so only "regionId -> color" needs syncing.
+ * "draw" rooms are a blank page; each stroke's point list is resent (throttled) while drawn, so the
+ * other phone paints it live. Both share players/holds/meta.clearSeq same as the puzzle.
+ *
+ * rooms/<CODE>/players { uid: {name, color} }
+ * rooms/<CODE>/holds   { groupId: {uid, name, color} }   who is dragging what (puzzle only)
  */
 
 const $ = (id) => document.getElementById(id);
@@ -21,6 +32,13 @@ const COUNTS = [50, 100, 150, 200, 300, 500];
 const COLORS = ['#ff5c8a', '#4cc9f0', '#ffd166', '#06d6a0', '#b388ff', '#ff9f43'];
 const CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 const ROTS = [0, 90, 180, 270];
+const COLOR_PICS = [
+  { id: 'heart', label: 'Heart' },
+  { id: 'flower', label: 'Flower' },
+  { id: 'cat', label: 'Cat' },
+  { id: 'house', label: 'House' },
+];
+const PALETTE = ['#e63946', '#f3722c', '#f9c74f', '#90be6d', '#43aa8b', '#4d96ff', '#5e60ce', '#b5179e', '#ff70a6', '#8d5524', '#000000', '#ffffff'];
 
 let store;
 let me = readJSON('pt-me');
@@ -131,17 +149,17 @@ function renderList() {
   const ul = $('list');
   ul.innerHTML = '';
   const list = readJSON('pt-list', []);
-  if (!list.length) { ul.innerHTML = '<li class="empty">No puzzles yet</li>'; return; }
+  if (!list.length) { ul.innerHTML = '<li class="empty">No rooms yet</li>'; return; }
   for (const e of list) {
     const li = document.createElement('li');
-    const img = document.createElement('img');
-    img.src = e.thumb || '';
-    img.alt = '';
+    let thumb;
+    if (e.thumb) { thumb = document.createElement('img'); thumb.src = e.thumb; thumb.alt = ''; }
+    else { thumb = document.createElement('div'); thumb.className = 'thumbIcon'; thumb.textContent = e.icon || '🧩'; }
     const div = document.createElement('div');
     const b = document.createElement('b');
     b.textContent = e.code;
     const small = document.createElement('small');
-    small.textContent = `${e.n || '?'} pieces · ${e.pct ?? 0}% · ${new Date(e.t).toLocaleDateString()}`;
+    small.textContent = e.n ? `${e.n} pieces · ${e.pct ?? 0}% · ${new Date(e.t).toLocaleDateString()}` : new Date(e.t).toLocaleDateString();
     div.append(b, small);
     const x = document.createElement('button');
     x.className = 'x';
@@ -152,9 +170,58 @@ function renderList() {
       writeJSON('pt-list', readJSON('pt-list', []).filter((y) => y.code !== e.code));
       renderList();
     };
-    li.append(img, div, x);
+    li.append(thumb, div, x);
     li.onclick = () => openRoom(e.code);
     ul.append(li);
+  }
+}
+
+// ---------- home: Puzzle / Color mode tabs ----------
+function setHomeMode(m) {
+  $('modePuzzle').classList.toggle('on', m === 'puzzle');
+  $('modeColor').classList.toggle('on', m === 'color');
+  $('puzzleCreate').hidden = m !== 'puzzle';
+  $('colorCreate').hidden = m !== 'color';
+}
+$('modePuzzle').onclick = () => setHomeMode('puzzle');
+$('modeColor').onclick = () => setHomeMode('color');
+
+function buildGallery() {
+  const box = $('gallery');
+  if (box.children.length) return;
+  for (const p of COLOR_PICS) {
+    const b = document.createElement('button');
+    const img = document.createElement('img');
+    img.src = `coloring/${p.id}.png`;
+    img.alt = p.label;
+    const span = document.createElement('span');
+    span.textContent = p.label;
+    b.append(img, span);
+    b.onclick = () => createColorRoom('fill', p.id);
+    box.append(b);
+  }
+}
+$('blankPage').onclick = () => createColorRoom('draw', null);
+
+async function createColorRoom(mode, picId) {
+  toast(mode === 'fill' ? 'Opening picture…' : 'Starting a blank page…', 8000);
+  try {
+    let W = 1000, H = 1400;
+    if (mode === 'fill') {
+      const img = await loadImage(`coloring/${picId}.png`);
+      W = img.width; H = img.height;
+    }
+    const code = newCode();
+    await store.createRoom(code, {
+      meta: { kind: 'color', mode, image: picId, w: W, h: H, created: Date.now(), by: me.name, clearSeq: 0 },
+      regions: {},
+    });
+    remember(code, mode === 'fill' ? { thumb: `coloring/${picId}.png`, icon: '🎨' } : { icon: '✏️' });
+    await openRoom(code);
+    if (mode === 'fill') toast('🖌️ Tap a shape to fill it with the selected color', 3500);
+  } catch (err) {
+    console.error(err);
+    toast('Could not start: ' + err.message, 4000);
   }
 }
 
@@ -208,7 +275,7 @@ $('create').onclick = async () => {
     const code = newCode();
     toast('Creating puzzle…', 10000);
     await store.createRoom(code, {
-      meta: { cols, rows, w: W, h: H, seed, created: Date.now(), by: me.name },
+      meta: { kind: 'puzzle', cols, rows, w: W, h: H, seed, created: Date.now(), by: me.name },
       image: pick.dataUrl,
       pieces,
       groups,
@@ -231,7 +298,7 @@ $('join').onclick = () => {
 
 // ---------- open a room ----------
 async function openRoom(code) {
-  toast('Opening puzzle…', 15000);
+  toast('Opening room…', 15000);
   let data;
   try {
     data = await store.loadRoom(code);
@@ -239,17 +306,24 @@ async function openRoom(code) {
     toast('Error: ' + e.message, 4000);
     return;
   }
-  if (!data) { toast('No puzzle with code ' + code, 3000); return; }
-  const img = await loadImage(data.image);
-  const known = readJSON('pt-list', []).find((e) => e.code === code);
-  remember(code, { thumb: known?.thumb || downscale(img, 200, 0.7), n: data.meta.cols * data.meta.rows });
+  if (!data) { toast('No room with code ' + code, 3000); return; }
+  const kind = data.meta.kind || 'puzzle';
 
   leaveGame();
   $('home').hidden = true;
   $('game').hidden = false;
   history.replaceState(null, '', '?room=' + code);
   $('roomCode').textContent = code;
-  startGame(code, data, img);
+
+  if (kind === 'color') {
+    remember(code, data.meta.mode === 'fill' ? { thumb: `coloring/${data.meta.image}.png`, icon: '🎨' } : { icon: '✏️' });
+    await startColorGame(code, data);
+  } else {
+    const img = await loadImage(data.image);
+    const known = readJSON('pt-list', []).find((e) => e.code === code);
+    remember(code, { thumb: known?.thumb || downscale(img, 200, 0.7), n: data.meta.cols * data.meta.rows });
+    startGame(code, data, img);
+  }
   $('toast').hidden = true;
 }
 
@@ -306,7 +380,7 @@ function startGame(code, data, img) {
   const { cols, rows, w: W, h: H, seed } = data.meta;
   const pw = W / cols, ph = H / rows, S = Math.min(pw, ph), n = cols * rows;
   G = {
-    code, cols, rows, W, H, pw, ph, S, n, img,
+    kind: 'puzzle', code, cols, rows, W, H, pw, ph, S, n, img,
     edges: makeEdges(rows, cols, seed),
     groups: new Map(), pieceGroup: new Array(n), shapes: new Array(n),
     holds: {}, players: {}, dragId: null, done: false, snap: S * 0.28,
@@ -327,6 +401,8 @@ function startGame(code, data, img) {
   G.top = new Konva.Layer(); // the group being dragged lives here, so only it redraws
   stage.add(bg, G.layer, G.top);
   $('ghost').classList.remove('on');
+  $('ghost').hidden = false;
+  $('palette').hidden = true;
 
   for (const [id, v] of Object.entries(data.groups || {})) {
     const g = model(id);
@@ -593,6 +669,14 @@ function zoomAt(f, cx = innerWidth / 2, cy = innerHeight / 2) {
 }
 
 function fit() {
+  const top = 64, pad = 12;
+  if (G.kind === 'color') {
+    const vw = innerWidth - pad * 2, vh = innerHeight - top - pad * 2;
+    const s = Math.min(vw / G.W, vh / G.H);
+    G.stage.scale({ x: s, y: s });
+    G.stage.position({ x: pad + (vw - G.W * s) / 2, y: top + pad + (vh - G.H * s) / 2 });
+    return;
+  }
   let x0 = 0, y0 = 0, x1 = G.W, y1 = G.H;
   for (let i = 0; i < G.n; i++) {
     const gid = G.pieceGroup[i];
@@ -604,7 +688,6 @@ function fit() {
     x0 = Math.min(x0, cx - hw); y0 = Math.min(y0, cy - hh);
     x1 = Math.max(x1, cx + hw); y1 = Math.max(y1, cy + hh);
   }
-  const top = 64, pad = 12;
   const vw = innerWidth - pad * 2, vh = innerHeight - top - pad * 2;
   const s = Math.min(vw / (x1 - x0), vh / (y1 - y0));
   G.stage.scale({ x: s, y: s });
@@ -636,6 +719,294 @@ function setupGestures(stage) {
   });
 }
 
+// ---------- coloring game ----------
+const hexToRgb = (hex) => { const n = parseInt(hex.slice(1), 16); return [(n >> 16) & 255, (n >> 8) & 255, n & 255]; };
+
+// Flood-fill the line-art image into numbered regions. Both phones load the same static PNG and
+// run this same deterministic scan, so region N means the same enclosed area on both screens —
+// only "region N got color C" ever needs to be sent.
+function computeRegions(imgEl) {
+  const w = imgEl.width, h = imgEl.height;
+  const c = document.createElement('canvas');
+  c.width = w; c.height = h;
+  const ctx = c.getContext('2d', { willReadFrequently: true });
+  ctx.drawImage(imgEl, 0, 0, w, h);
+  const { data } = ctx.getImageData(0, 0, w, h);
+  const ink = new Uint8Array(w * h);
+  for (let p = 0, i = 0; p < data.length; p += 4, i++) {
+    const lum = data[p] * 0.299 + data[p + 1] * 0.587 + data[p + 2] * 0.114;
+    ink[i] = lum < 200 || data[p + 3] < 128 ? 1 : 0; // dark (outline) or transparent = wall
+  }
+  const label = new Int32Array(w * h).fill(-1);
+  const pixels = [];
+  const qx = new Int32Array(w * h), qy = new Int32Array(w * h);
+  let nextId = 0;
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const idx = y * w + x;
+      if (ink[idx] || label[idx] !== -1) continue;
+      let qh = 0, qt = 0;
+      qx[qt] = x; qy[qt] = y; qt++;
+      label[idx] = nextId;
+      const list = [idx];
+      while (qh < qt) {
+        const cx = qx[qh], cy = qy[qh]; qh++;
+        for (const [nx, ny] of [[cx - 1, cy], [cx + 1, cy], [cx, cy - 1], [cx, cy + 1]]) {
+          if (nx < 0 || ny < 0 || nx >= w || ny >= h) continue;
+          const nidx = ny * w + nx;
+          if (ink[nidx] || label[nidx] !== -1) continue;
+          label[nidx] = nextId;
+          qx[qt] = nx; qy[qt] = ny; qt++;
+          list.push(nidx);
+        }
+      }
+      pixels[nextId] = Int32Array.from(list);
+      nextId++;
+    }
+  }
+  return { w, h, label, pixels };
+}
+
+function paintRegion(regionId, color) {
+  const pix = G.regionPixels[regionId];
+  if (!pix) return;
+  const [r, gg, b] = hexToRgb(color);
+  const data = G.paintData.data;
+  for (const idx of pix) {
+    const o = idx * 4;
+    data[o] = r; data[o + 1] = gg; data[o + 2] = b; data[o + 3] = 255;
+  }
+}
+
+// Composite the fills (paintData) with the line-art drawn in "multiply" so black ink stays black
+// and colors show through the white paper — then let Konva redraw from the same canvas element.
+function refreshPaint() {
+  const ctx = G.compositeCtx;
+  ctx.globalCompositeOperation = 'source-over';
+  ctx.putImageData(G.paintData, 0, 0);
+  ctx.globalCompositeOperation = 'multiply';
+  ctx.drawImage(G.lineImg, 0, 0, G.W, G.H);
+  ctx.globalCompositeOperation = 'source-over';
+  G.layer.batchDraw();
+}
+
+function onRegion(id, color) {
+  if (!G || G.kind !== 'color' || G.mode !== 'fill' || !color) return;
+  const rid = +id;
+  if (G.regionColors.get(rid) === color) return;
+  G.regionColors.set(rid, color);
+  paintRegion(rid, color);
+  refreshPaint();
+}
+
+function onFillTap() {
+  const pos = G.konvaImage.getRelativePointerPosition();
+  let x = Math.round(pos.x), y = Math.round(pos.y);
+  if (x < 0 || y < 0 || x >= G.W || y >= G.H) return;
+  let rid = G.label[y * G.W + x];
+  if (rid === -1) {
+    // forgive an imprecise tap that landed right on a thin outline
+    search: for (let rad = 1; rad <= 6 && rid === -1; rad++) {
+      for (let dy = -rad; dy <= rad; dy++) {
+        for (let dx = -rad; dx <= rad; dx++) {
+          const nx = x + dx, ny = y + dy;
+          if (nx < 0 || ny < 0 || nx >= G.W || ny >= G.H) continue;
+          const nid = G.label[ny * G.W + nx];
+          if (nid !== -1) { rid = nid; break search; }
+        }
+      }
+    }
+  }
+  if (rid === -1) return;
+  const color = G.drawColor;
+  G.regionColors.set(rid, color);
+  paintRegion(rid, color);
+  refreshPaint();
+  click(true);
+  store.update(G.code, { ['regions/' + rid]: color }).catch((e) => toast('Sync error: ' + e.message, 3000));
+}
+
+function strokeSegment(x0, y0, x1, y1, color, width) {
+  const ctx = G.compositeCtx;
+  ctx.strokeStyle = color; ctx.lineWidth = width; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+  ctx.beginPath(); ctx.moveTo(x0, y0); ctx.lineTo(x1, y1); ctx.stroke();
+}
+function drawDot(x, y, color, width) {
+  const ctx = G.compositeCtx;
+  ctx.fillStyle = color;
+  ctx.beginPath(); ctx.arc(x, y, width / 2, 0, Math.PI * 2); ctx.fill();
+}
+
+function beginStroke(x, y) {
+  const id = 's' + Math.random().toString(36).slice(2, 10);
+  G.currentStroke = { id, uid: store.uid, color: G.drawColor, width: G.brushSize, points: [[Math.round(x), Math.round(y)]] };
+  drawDot(x, y, G.drawColor, G.brushSize);
+  G.remoteCursors.set(id, 1); // we already drew this locally — onStroke should pick up from here, not redraw it
+  G.layer.batchDraw();
+}
+function continueStroke(x, y) {
+  if (!G.currentStroke) return;
+  const pts = G.currentStroke.points;
+  const [px, py] = pts[pts.length - 1];
+  pts.push([Math.round(x), Math.round(y)]);
+  strokeSegment(px, py, x, y, G.currentStroke.color, G.currentStroke.width);
+  G.remoteCursors.set(G.currentStroke.id, pts.length);
+  G.layer.batchDraw();
+  const t = performance.now();
+  if (t - G.lastSync > 70) { G.lastSync = t; syncStroke(); }
+}
+function endStroke() {
+  if (!G.currentStroke) return;
+  syncStroke();
+  G.currentStroke = null;
+}
+function syncStroke() {
+  const s = G.currentStroke;
+  store.update(G.code, { ['strokes/' + s.id]: { uid: s.uid, color: s.color, width: s.width, points: s.points } }).catch(() => {});
+}
+
+// Draws only the segments not drawn yet for this stroke id — safe whether the update is this
+// phone's own echoed write or the other player's, so there's no need to special-case "my own".
+function onStroke(id, s) {
+  if (!G || G.kind !== 'color' || G.mode !== 'draw' || !s?.points?.length) return;
+  const have = G.remoteCursors.get(id) || 0;
+  const pts = s.points;
+  if (have >= pts.length) return;
+  if (!have) drawDot(pts[0][0], pts[0][1], s.color, s.width);
+  for (let i = Math.max(have, 1); i < pts.length; i++) strokeSegment(pts[i - 1][0], pts[i - 1][1], pts[i][0], pts[i][1], s.color, s.width);
+  G.remoteCursors.set(id, pts.length);
+  G.layer.batchDraw();
+}
+
+function wireDrawing(stage) {
+  const within1 = (e) => !(e.evt.touches && e.evt.touches.length > 1);
+  stage.on('mousedown touchstart', (e) => {
+    if (!within1(e)) return;
+    const p = G.konvaImage.getRelativePointerPosition();
+    if (p.x < 0 || p.y < 0 || p.x > G.W || p.y > G.H) return;
+    G.drawing = true;
+    beginStroke(p.x, p.y);
+  });
+  stage.on('mousemove touchmove', (e) => {
+    if (!G.drawing || !within1(e)) return;
+    const p = G.konvaImage.getRelativePointerPosition();
+    continueStroke(Math.max(0, Math.min(G.W, p.x)), Math.max(0, Math.min(G.H, p.y)));
+  });
+  stage.on('mouseup touchend mouseleave', () => { if (G.drawing) { G.drawing = false; endStroke(); } });
+}
+
+function buildPalette() {
+  const row = $('swatchRow');
+  row.innerHTML = '';
+  for (const c of PALETTE) {
+    const b = document.createElement('button');
+    b.style.background = c;
+    if (c === '#ffffff') b.style.boxShadow = 'inset 0 0 0 1px rgba(255,255,255,.4)';
+    b.className = c === G.drawColor ? 'on' : '';
+    b.onclick = () => {
+      G.drawColor = c;
+      $('eraser').classList.remove('on');
+      [...row.children].forEach((x) => x.classList.toggle('on', x === b));
+    };
+    row.append(b);
+  }
+}
+function setBrush(size, id) {
+  G.brushSize = size;
+  for (const b of ['brushS', 'brushM', 'brushL']) $(b).classList.toggle('on', b === id);
+}
+$('brushS').onclick = () => setBrush(6, 'brushS');
+$('brushM').onclick = () => setBrush(12, 'brushM');
+$('brushL').onclick = () => setBrush(22, 'brushL');
+$('eraser').onclick = () => {
+  G.drawColor = '#ffffff';
+  $('eraser').classList.toggle('on', true);
+  [...$('swatchRow').children].forEach((x) => x.classList.remove('on'));
+};
+$('clearPage').onclick = () => {
+  if (!G || G.kind !== 'color') return;
+  G.clearSeq = (G.clearSeq || 0) + 1;
+  wipeCanvas();
+  const patch = { ['meta/clearSeq']: G.clearSeq };
+  patch[G.mode === 'fill' ? 'regions' : 'strokes'] = null;
+  store.update(G.code, patch).catch((e) => toast('Sync error: ' + e.message, 3000));
+};
+function wipeCanvas() {
+  G.compositeCtx.globalCompositeOperation = 'source-over';
+  G.compositeCtx.fillStyle = '#fff';
+  G.compositeCtx.fillRect(0, 0, G.W, G.H);
+  G.regionColors.clear();
+  G.remoteCursors.clear();
+  if (G.mode === 'fill' && G.paintData) { G.paintData.data.fill(255); refreshPaint(); }
+  G.layer.batchDraw();
+}
+function onClear(seq) {
+  if (!G || G.kind !== 'color') return;
+  if (seq > (G.clearSeq || 0)) { G.clearSeq = seq; wipeCanvas(); }
+}
+
+async function startColorGame(code, data) {
+  const mode = data.meta.mode, W = data.meta.w, H = data.meta.h;
+  G = {
+    kind: 'color', mode, code, W, H, clearSeq: data.meta.clearSeq || 0,
+    regionColors: new Map(), remoteCursors: new Map(), players: {}, holds: {},
+    drawColor: PALETTE[0], brushSize: 12, currentStroke: null, drawing: false, lastSync: 0,
+  };
+
+  Konva.hitOnDragEnabled = true;
+  const stage = new Konva.Stage({ container: 'stage', width: innerWidth, height: innerHeight, draggable: mode === 'fill' });
+  G.stage = stage;
+  G.layer = new Konva.Layer();
+  stage.add(G.layer);
+
+  const canvas = document.createElement('canvas');
+  canvas.width = W; canvas.height = H;
+  G.compositeCanvas = canvas;
+  G.compositeCtx = canvas.getContext('2d');
+  G.compositeCtx.fillStyle = '#fff';
+  G.compositeCtx.fillRect(0, 0, W, H);
+
+  if (mode === 'fill') {
+    const img = await loadImage(`coloring/${data.meta.image}.png`);
+    const regions = computeRegions(img);
+    G.label = regions.label; G.regionPixels = regions.pixels; G.lineImg = img;
+    G.paintData = new ImageData(new Uint8ClampedArray(W * H * 4).fill(255), W, H);
+    for (const [id, color] of Object.entries(data.regions || {})) {
+      G.regionColors.set(+id, color);
+      paintRegion(+id, color);
+    }
+    refreshPaint();
+  } else {
+    for (const [id, s] of Object.entries(data.strokes || {})) {
+      if (!s?.points?.length) continue;
+      drawDot(s.points[0][0], s.points[0][1], s.color, s.width);
+      for (let i = 1; i < s.points.length; i++) strokeSegment(s.points[i - 1][0], s.points[i - 1][1], s.points[i][0], s.points[i][1], s.color, s.width);
+      G.remoteCursors.set(id, s.points.length);
+    }
+  }
+
+  G.konvaImage = new Konva.Image({ image: canvas, width: W, height: H });
+  G.layer.add(G.konvaImage);
+  if (mode === 'fill') G.konvaImage.on('click tap', onFillTap);
+  else wireDrawing(stage);
+
+  $('ghost').hidden = true;
+  $('palette').hidden = false;
+  $('brushRow').style.display = mode === 'draw' ? 'flex' : 'none';
+  buildPalette();
+  fit();
+  setupGestures(stage);
+
+  G.unsub = store.subscribe(code, {
+    onRegion: (id, color) => onRegion(id, color),
+    onStroke: (id, s) => onStroke(id, s),
+    onClear: (seq) => onClear(seq),
+    onPlayers,
+    onHolds: () => {},
+  });
+  store.join(code, { name: me.name, color: me.color }).catch(() => {});
+}
+
 $('zoomIn').onclick = () => zoomAt(1.3);
 $('zoomOut').onclick = () => zoomAt(1 / 1.3);
 $('fit').onclick = () => fit();
@@ -648,9 +1019,9 @@ $('back').onclick = () => { leaveGame(); showHome(); };
 $('winClose').onclick = () => { $('win').hidden = true; };
 $('share').onclick = async () => {
   const url = location.origin + location.pathname + '?room=' + G.code;
-  const text = `Come play our puzzle 🧩 Code: ${G.code}`;
+  const text = G.kind === 'color' ? `Come color together 🎨 Code: ${G.code}` : `Come play our puzzle 🧩 Code: ${G.code}`;
   try {
-    if (navigator.share) await navigator.share({ title: 'Puzzle Together', text, url });
+    if (navigator.share) await navigator.share({ title: 'Together', text, url });
     else { await navigator.clipboard.writeText(`${text}\n${url}`); toast('Invite link copied'); }
   } catch {}
 };
@@ -671,6 +1042,7 @@ async function boot() {
   }
   renderCounts();
   renderList();
+  buildGallery();
   if (!me) await askName();
   $('who').textContent = `Hi ${me.name} 💕  (tap to change)`;
   const code = new URLSearchParams(location.search).get('room');

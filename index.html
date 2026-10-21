@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
   <meta name="theme-color" content="#1d1a2b">
-  <title>Puzzle Together</title>
+  <title>Together</title>
   <link rel="manifest" href="manifest.webmanifest">
   <link rel="icon" href="icon-192.png">
   <link rel="apple-touch-icon" href="icon-192.png">
@@ -14,10 +14,15 @@
 <body>
 
 <section id="home">
-  <h1>🧩 Puzzle Together</h1>
+  <h1>💕 Together</h1>
   <p class="sub" id="who" title="Change name"></p>
 
-  <div class="card">
+  <div class="modes">
+    <button id="modePuzzle" class="modeBtn on">🧩 Puzzle</button>
+    <button id="modeColor" class="modeBtn">🎨 Color</button>
+  </div>
+
+  <div class="card" id="puzzleCreate">
     <h2>New puzzle</h2>
     <label class="file"><input type="file" id="file" accept="image/*"><span id="fileLabel">📷 Choose a photo</span></label>
     <img id="preview" alt="" hidden>
@@ -26,8 +31,15 @@
     <button id="create" class="primary" disabled>Create puzzle</button>
   </div>
 
+  <div class="card" id="colorCreate" hidden>
+    <h2>New coloring page</h2>
+    <p class="hint">Pick a picture, or start blank</p>
+    <div class="gallery" id="gallery"></div>
+    <button id="blankPage" class="primary">✏️ Start on a blank page</button>
+  </div>
+
   <div class="card">
-    <h2>Join a puzzle</h2>
+    <h2>Join a room</h2>
     <div class="row">
       <input id="joinCode" placeholder="CODE" maxlength="6" autocomplete="off" autocapitalize="characters">
       <button id="join">Join</button>
@@ -35,7 +47,7 @@
   </div>
 
   <div class="card">
-    <h2>My puzzles</h2>
+    <h2>My rooms</h2>
     <ul id="list"></ul>
   </div>
 
@@ -55,6 +67,16 @@
     <button id="zoomIn" class="icon" aria-label="Zoom in">＋</button>
     <button id="zoomOut" class="icon" aria-label="Zoom out">－</button>
     <button id="fit" class="icon" aria-label="Fit">⤢</button>
+  </div>
+  <div id="palette" hidden>
+    <div class="swatchRow" id="swatchRow"></div>
+    <div class="brushRow" id="brushRow">
+      <button id="brushS" class="brush" aria-label="Thin brush"><i style="width:6px;height:6px"></i></button>
+      <button id="brushM" class="brush on" aria-label="Medium brush"><i style="width:12px;height:12px"></i></button>
+      <button id="brushL" class="brush" aria-label="Thick brush"><i style="width:20px;height:20px"></i></button>
+      <button id="eraser" class="icon" aria-label="Eraser">🧹</button>
+    </div>
+    <button id="clearPage" class="icon" aria-label="Clear everything">🗑</button>
   </div>
   <div id="win" hidden>
     <div>

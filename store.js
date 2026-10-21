@@ -43,6 +43,22 @@ async function firebaseStore(cfg) {
         D.onValue(ref(code, 'players'), (s) => h.onPlayers(s.val() || {})),
         D.onValue(ref(code, 'holds'), (s) => h.onHolds(s.val() || {})),
       ];
+      // Coloring game only: both players painting the same picture or page at once.
+      if (h.onRegion) {
+        const r = ref(code, 'regions');
+        offs.push(
+          D.onChildAdded(r, (s) => h.onRegion(s.key, s.val())),
+          D.onChildChanged(r, (s) => h.onRegion(s.key, s.val())),
+        );
+      }
+      if (h.onStroke) {
+        const st = ref(code, 'strokes');
+        offs.push(
+          D.onChildAdded(st, (s) => h.onStroke(s.key, s.val())),
+          D.onChildChanged(st, (s) => h.onStroke(s.key, s.val())),
+        );
+      }
+      if (h.onClear) offs.push(D.onValue(ref(code, 'meta/clearSeq'), (s) => h.onClear(s.val() || 0)));
       return () => offs.forEach((off) => off());
     },
     async join(code, me) {
@@ -75,6 +91,9 @@ function localStore() {
       const [kind, id] = k.split('/');
       if (kind === 'groups') h.onGroup(id, v);
       else if (kind === 'pieces') h.onPiece(+id, v);
+      else if (kind === 'regions' && h.onRegion) h.onRegion(id, v);
+      else if (kind === 'strokes' && h.onStroke) h.onStroke(id, v);
+      else if (kind === 'meta' && id === 'clearSeq' && h.onClear) h.onClear(v);
     }
   };
   const bc = 'BroadcastChannel' in self ? new BroadcastChannel('puzzle-together') : null;

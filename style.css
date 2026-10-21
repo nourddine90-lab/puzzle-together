@@ -42,6 +42,21 @@ h1 { margin: 8px 0 0; font-size: 28px; }
 }
 .file input { display: none; }
 #preview { display: block; max-width: 100%; max-height: 180px; margin: 12px auto 0; border-radius: 10px; }
+
+.modes { display: flex; gap: 8px; margin: 18px 0 14px; }
+.modeBtn { flex: 1; padding: 12px; font-weight: 600; color: var(--muted); }
+.modeBtn.on { background: var(--accent); color: #fff; border-color: transparent; }
+
+.gallery { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; margin-bottom: 14px; }
+.gallery button {
+  padding: 0; border-radius: 14px; overflow: hidden; aspect-ratio: 3/4;
+  background: #fff; border: 2px solid var(--line); position: relative;
+}
+.gallery img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.gallery span {
+  position: absolute; left: 0; right: 0; bottom: 0; padding: 4px 0;
+  background: #000a; color: #fff; font-size: 12px; font-weight: 600;
+}
 .counts { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin: 8px 0 14px; }
 .counts button.on { background: var(--accent); border-color: transparent; font-weight: 600; }
 .row { display: flex; gap: 8px; }
@@ -50,6 +65,10 @@ h1 { margin: 8px 0 0; font-size: 28px; }
 #list li { display: flex; align-items: center; gap: 12px; padding: 8px; border-radius: 12px; cursor: pointer; }
 #list li:hover { background: rgba(255, 255, 255, .04); }
 #list img { width: 56px; height: 56px; object-fit: cover; border-radius: 10px; background: #111; }
+.thumbIcon {
+  width: 56px; height: 56px; flex: none; border-radius: 10px;
+  background: #1a1726; display: grid; place-items: center; font-size: 26px;
+}
 #list div { flex: 1; min-width: 0; }
 #list small { display: block; color: var(--muted); }
 #list .x { background: none; border: none; color: var(--muted); padding: 8px; }
@@ -88,6 +107,27 @@ h1 { margin: 8px 0 0; font-size: 28px; }
   display: flex; flex-direction: column; gap: 10px;
 }
 #ghost.on { background: var(--accent); }
+
+#palette {
+  position: absolute; left: 0; right: 0; bottom: 0;
+  padding: 10px 12px max(10px, env(safe-area-inset-bottom));
+  background: linear-gradient(#14111d00, #14111dee 40%);
+  display: flex; flex-direction: column; align-items: center; gap: 8px;
+}
+.swatchRow { display: flex; gap: 8px; overflow-x: auto; max-width: 100%; padding: 2px; }
+.swatchRow button {
+  flex: none; width: 34px; height: 34px; border-radius: 50%; padding: 0;
+  border: 3px solid transparent;
+}
+.swatchRow button.on { border-color: #fff; }
+.brushRow { display: flex; align-items: center; gap: 10px; }
+.brush {
+  width: 40px; height: 40px; border-radius: 50%; padding: 0;
+  display: grid; place-items: center; background: rgba(42, 37, 64, .85);
+}
+.brush.on { background: var(--accent); }
+.brush i { display: block; border-radius: 50%; background: #fff; }
+#clearPage { background: rgba(255, 92, 92, .25); }
 
 #toast {
   position: fixed; left: 50%; bottom: 90px; transform: translateX(-50%); z-index: 30;
