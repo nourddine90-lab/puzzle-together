@@ -208,6 +208,26 @@ function buildGallery() {
 }
 $('blankPage').onclick = () => createColorRoom('draw');
 
+$('tracePhotoFile').onchange = async (e) => {
+  const f = e.target.files[0];
+  if (!f) return;
+  const label = $('tracePhotoLabel');
+  label.textContent = '🖼️ Loading…';
+  const url = URL.createObjectURL(f);
+  try {
+    const raw = await loadImage(url);
+    const backdrop = downscale(raw, 1100, 0.85); // kept as a real photo — not converted to line art
+    await createColorRoom('draw', null, backdrop);
+  } catch (err) {
+    console.error(err);
+    toast('Could not read that photo', 3000);
+  } finally {
+    URL.revokeObjectURL(url);
+    label.textContent = '🖼️ Or trace freely over a photo';
+    e.target.value = '';
+  }
+};
+
 $('photoFile').onchange = async (e) => {
   const f = e.target.files[0];
   if (!f) return;
@@ -229,7 +249,8 @@ $('photoFile').onchange = async (e) => {
 };
 
 // `imageSrc` is either a path to a built-in picture, or a line-art data URL from toLineArt().
-async function createColorRoom(mode, imageSrc) {
+// `backdrop` (draw mode only) is a photo data URL to trace freely over — kept as-is, not line-arted.
+async function createColorRoom(mode, imageSrc, backdrop) {
   toast(mode === 'fill' ? 'Opening picture…' : 'Starting a blank page…', 8000);
   try {
     let image = null, W = 1000, H = 1400;
@@ -241,8 +262,10 @@ async function createColorRoom(mode, imageSrc) {
     const code = newCode();
     const data = { meta: { kind: 'color', mode, w: W, h: H, created: Date.now(), by: me.name, clearSeq: 0 }, regions: {} };
     if (image) data.image = image;
+    if (backdrop) data.backdrop = backdrop;
     await store.createRoom(code, data);
-    remember(code, mode === 'fill' ? { thumb: downscale(await loadImage(image), 200, 0.7), icon: '🎨' } : { icon: '✏️' });
+    if (mode === 'fill') remember(code, { thumb: downscale(await loadImage(image), 200, 0.7), icon: '🎨' });
+    else remember(code, backdrop ? { thumb: downscale(await loadImage(backdrop), 200, 0.7), icon: '🖼️' } : { icon: '✏️' });
     await openRoom(code);
     if (mode === 'fill') toast('🖌️ Tap a shape to fill it with the selected color', 3500);
   } catch (err) {
@@ -258,10 +281,25 @@ function imageToDataUrl(img) {
   return c.toDataURL('image/png');
 }
 
-// Turns any photo into black-outline/white-paper line art, entirely in the browser (no AI call,
-// no server): grayscale → blur to merge fine texture → Sobel edge strength → threshold to black/white.
+// A real photo has lots of midtones; a coloring page/line-art image is almost entirely
+// near-white paper and near-black ink. If nearly everything is already extreme, skip edge
+// detection — running it on top of existing clean lines only adds noise and doubled outlines.
+function looksLikeLineArt(data) {
+  let extreme = 0, total = 0;
+  for (let p = 0; p < data.length; p += 4 * 5) { // sample every 5th pixel — plenty accurate, much faster
+    const lum = data[p] * 0.299 + data[p + 1] * 0.587 + data[p + 2] * 0.114;
+    if (lum > 232 || lum < 60) extreme++;
+    total++;
+  }
+  return extreme / total > 0.88;
+}
+
+// Turns a photo into black-outline/white-paper line art, entirely in the browser (no AI call, no
+// server): grayscale → blur to merge fine texture → Sobel edge strength → threshold to black/white.
 // Works best on a simple, high-contrast subject; a busy photo makes a busier (but still usable) page.
-function toLineArt(img, maxSize = 900) {
+// An image that's already line art (a downloaded coloring page, etc.) is just cleanly thresholded
+// instead — sharpening its existing lines rather than re-detecting edges on top of them.
+function toLineArt(img, maxSize = 1100) {
   const k = Math.min(1, maxSize / Math.max(img.width, img.height));
   const w = Math.max(1, Math.round(img.width * k)), h = Math.max(1, Math.round(img.height * k));
   const c = document.createElement('canvas');
@@ -269,6 +307,17 @@ function toLineArt(img, maxSize = 900) {
   const ctx = c.getContext('2d', { willReadFrequently: true });
   ctx.drawImage(img, 0, 0, w, h);
   const { data } = ctx.getImageData(0, 0, w, h);
+
+  if (looksLikeLineArt(data)) {
+    const out = ctx.createImageData(w, h);
+    for (let p = 0, i = 0; p < data.length; p += 4, i += 4) {
+      const lum = data[p] * 0.299 + data[p + 1] * 0.587 + data[p + 2] * 0.114;
+      const v = lum < 200 ? 0 : 255;
+      out.data[i] = v; out.data[i + 1] = v; out.data[i + 2] = v; out.data[i + 3] = 255;
+    }
+    ctx.putImageData(out, 0, 0);
+    return c.toDataURL('image/png');
+  }
 
   let gray = new Float32Array(w * h);
   for (let i = 0, p = 0; i < gray.length; i++, p += 4) gray[i] = data[p] * 0.299 + data[p + 1] * 0.587 + data[p + 2] * 0.114;
@@ -1035,12 +1084,24 @@ function onStroke(id, s) {
   G.layer.batchDraw();
 }
 
+// The drawing canvas's blank state: plain white, or — when tracing over a photo — white with
+// that photo faded in underneath, so strokes painted on top always stay fully opaque and crisp.
+function paintBase() {
+  const ctx = G.compositeCtx;
+  ctx.globalCompositeOperation = 'source-over'; ctx.filter = 'none'; ctx.globalAlpha = 1;
+  ctx.fillStyle = '#fff';
+  ctx.fillRect(0, 0, G.W, G.H);
+  if (G.mode === 'draw' && G.backdrop) {
+    ctx.globalAlpha = 0.4;
+    ctx.drawImage(G.backdrop, 0, 0, G.W, G.H);
+    ctx.globalAlpha = 1;
+  }
+}
+
 // Full repaint from everything currently known (used after an undo, since a single stroke can't
 // be "unpainted" from a flat canvas — only replayed from scratch without it).
 function redrawAll() {
-  G.compositeCtx.filter = 'none'; G.compositeCtx.globalAlpha = 1;
-  G.compositeCtx.fillStyle = '#fff';
-  G.compositeCtx.fillRect(0, 0, G.W, G.H);
+  paintBase();
   G.remoteCursors.clear();
   for (const [id, s] of G.allStrokes) {
     if (!s?.points?.length) continue;
@@ -1215,10 +1276,7 @@ $('clearPage').onclick = () => {
   store.update(G.code, patch).catch((e) => toast('Sync error: ' + e.message, 3000));
 };
 function wipeCanvas() {
-  G.compositeCtx.globalCompositeOperation = 'source-over';
-  G.compositeCtx.filter = 'none'; G.compositeCtx.globalAlpha = 1;
-  G.compositeCtx.fillStyle = '#fff';
-  G.compositeCtx.fillRect(0, 0, G.W, G.H);
+  paintBase();
   G.regionColors.clear();
   G.remoteCursors.clear();
   G.allStrokes.clear();
@@ -1253,8 +1311,8 @@ async function startColorGame(code, data, preloadedImg) {
   canvas.width = W; canvas.height = H;
   G.compositeCanvas = canvas;
   G.compositeCtx = canvas.getContext('2d');
-  G.compositeCtx.fillStyle = '#fff';
-  G.compositeCtx.fillRect(0, 0, W, H);
+  G.backdrop = mode === 'draw' && data.backdrop ? await loadImage(data.backdrop) : null;
+  paintBase();
 
   if (mode === 'fill') {
     const img = preloadedImg || await loadImage(data.image);
