@@ -197,32 +197,117 @@ function buildGallery() {
     const span = document.createElement('span');
     span.textContent = p.label;
     b.append(img, span);
-    b.onclick = () => createColorRoom('fill', p.id);
+    b.onclick = () => createColorRoom('fill', `coloring/${p.id}.png`);
     box.append(b);
   }
 }
-$('blankPage').onclick = () => createColorRoom('draw', null);
+$('blankPage').onclick = () => createColorRoom('draw');
 
-async function createColorRoom(mode, picId) {
+$('photoFile').onchange = async (e) => {
+  const f = e.target.files[0];
+  if (!f) return;
+  const label = $('photoFileLabel');
+  label.textContent = '🖍️ Turning it into a coloring page…';
+  const url = URL.createObjectURL(f);
+  try {
+    const raw = await loadImage(url);
+    const lineArt = toLineArt(raw);
+    await createColorRoom('fill', lineArt);
+  } catch (err) {
+    console.error(err);
+    toast('Could not read that photo', 3000);
+  } finally {
+    URL.revokeObjectURL(url);
+    label.textContent = '📷 Upload your own photo';
+    e.target.value = '';
+  }
+};
+
+// `imageSrc` is either a path to a built-in picture, or a line-art data URL from toLineArt().
+async function createColorRoom(mode, imageSrc) {
   toast(mode === 'fill' ? 'Opening picture…' : 'Starting a blank page…', 8000);
   try {
-    let W = 1000, H = 1400;
+    let image = null, W = 1000, H = 1400;
     if (mode === 'fill') {
-      const img = await loadImage(`coloring/${picId}.png`);
+      const img = await loadImage(imageSrc);
       W = img.width; H = img.height;
+      image = imageToDataUrl(img); // embedded in the room so both phones draw identical pixels
     }
     const code = newCode();
-    await store.createRoom(code, {
-      meta: { kind: 'color', mode, image: picId, w: W, h: H, created: Date.now(), by: me.name, clearSeq: 0 },
-      regions: {},
-    });
-    remember(code, mode === 'fill' ? { thumb: `coloring/${picId}.png`, icon: '🎨' } : { icon: '✏️' });
+    const data = { meta: { kind: 'color', mode, w: W, h: H, created: Date.now(), by: me.name, clearSeq: 0 }, regions: {} };
+    if (image) data.image = image;
+    await store.createRoom(code, data);
+    remember(code, mode === 'fill' ? { thumb: downscale(await loadImage(image), 200, 0.7), icon: '🎨' } : { icon: '✏️' });
     await openRoom(code);
     if (mode === 'fill') toast('🖌️ Tap a shape to fill it with the selected color', 3500);
   } catch (err) {
     console.error(err);
     toast('Could not start: ' + err.message, 4000);
   }
+}
+
+function imageToDataUrl(img) {
+  const c = document.createElement('canvas');
+  c.width = img.width; c.height = img.height;
+  c.getContext('2d').drawImage(img, 0, 0);
+  return c.toDataURL('image/png');
+}
+
+// Turns any photo into black-outline/white-paper line art, entirely in the browser (no AI call,
+// no server): grayscale → blur to merge fine texture → Sobel edge strength → threshold to black/white.
+// Works best on a simple, high-contrast subject; a busy photo makes a busier (but still usable) page.
+function toLineArt(img, maxSize = 900) {
+  const k = Math.min(1, maxSize / Math.max(img.width, img.height));
+  const w = Math.max(1, Math.round(img.width * k)), h = Math.max(1, Math.round(img.height * k));
+  const c = document.createElement('canvas');
+  c.width = w; c.height = h;
+  const ctx = c.getContext('2d', { willReadFrequently: true });
+  ctx.drawImage(img, 0, 0, w, h);
+  const { data } = ctx.getImageData(0, 0, w, h);
+
+  let gray = new Float32Array(w * h);
+  for (let i = 0, p = 0; i < gray.length; i++, p += 4) gray[i] = data[p] * 0.299 + data[p + 1] * 0.587 + data[p + 2] * 0.114;
+  gray = boxBlur(gray, w, h);
+  gray = boxBlur(gray, w, h); // second pass merges small texture into clean, colourable regions
+
+  const mag = new Float32Array(w * h);
+  let maxMag = 1;
+  for (let y = 1; y < h - 1; y++) {
+    for (let x = 1; x < w - 1; x++) {
+      const i = y * w + x;
+      const gx = gray[i - w - 1] + 2 * gray[i - 1] + gray[i + w - 1] - gray[i - w + 1] - 2 * gray[i + 1] - gray[i + w + 1];
+      const gy = gray[i - w - 1] + 2 * gray[i - w] + gray[i - w + 1] - gray[i + w - 1] - 2 * gray[i + w] - gray[i + w + 1];
+      const m = Math.hypot(gx, gy);
+      mag[i] = m;
+      if (m > maxMag) maxMag = m;
+    }
+  }
+  const thresh = maxMag * 0.17; // relative threshold: adapts to each photo's own contrast range
+  const out = ctx.createImageData(w, h);
+  for (let i = 0; i < mag.length; i++) {
+    const v = mag[i] > thresh ? 0 : 255;
+    const o = i * 4;
+    out.data[o] = v; out.data[o + 1] = v; out.data[o + 2] = v; out.data[o + 3] = 255;
+  }
+  ctx.putImageData(out, 0, 0);
+  return c.toDataURL('image/png');
+}
+function boxBlur(src, w, h) {
+  const out = new Float32Array(src.length);
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      let sum = 0, n = 0;
+      for (let dy = -1; dy <= 1; dy++) {
+        for (let dx = -1; dx <= 1; dx++) {
+          const nx = x + dx, ny = y + dy;
+          if (nx < 0 || ny < 0 || nx >= w || ny >= h) continue;
+          sum += src[ny * w + nx]; n++;
+        }
+      }
+      out[y * w + x] = sum / n;
+    }
+  }
+  return out;
 }
 
 $('who').onclick = () => askName();
@@ -316,8 +401,14 @@ async function openRoom(code) {
   $('roomCode').textContent = code;
 
   if (kind === 'color') {
-    remember(code, data.meta.mode === 'fill' ? { thumb: `coloring/${data.meta.image}.png`, icon: '🎨' } : { icon: '✏️' });
-    await startColorGame(code, data);
+    if (data.meta.mode === 'fill') {
+      const img = await loadImage(data.image);
+      remember(code, { thumb: downscale(img, 200, 0.7), icon: '🎨' });
+      await startColorGame(code, data, img);
+    } else {
+      remember(code, { icon: '✏️' });
+      await startColorGame(code, data);
+    }
   } else {
     const img = await loadImage(data.image);
     const known = readJSON('pt-list', []).find((e) => e.code === code);
@@ -1056,7 +1147,7 @@ function onClear(seq) {
   if (seq > (G.clearSeq || 0)) { G.clearSeq = seq; wipeCanvas(); }
 }
 
-async function startColorGame(code, data) {
+async function startColorGame(code, data, preloadedImg) {
   const mode = data.meta.mode, W = data.meta.w, H = data.meta.h;
   G = {
     kind: 'color', mode, code, W, H, clearSeq: data.meta.clearSeq || 0,
@@ -1081,7 +1172,7 @@ async function startColorGame(code, data) {
   G.compositeCtx.fillRect(0, 0, W, H);
 
   if (mode === 'fill') {
-    const img = await loadImage(`coloring/${data.meta.image}.png`);
+    const img = preloadedImg || await loadImage(data.image);
     const regions = computeRegions(img);
     G.label = regions.label; G.regionPixels = regions.pixels; G.lineImg = img;
     G.paintData = new ImageData(new Uint8ClampedArray(W * H * 4).fill(255), W, H);

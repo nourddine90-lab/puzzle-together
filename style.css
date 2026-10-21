@@ -57,6 +57,8 @@ h1 { margin: 8px 0 0; font-size: 28px; }
   position: absolute; left: 0; right: 0; bottom: 0; padding: 4px 0;
   background: #000a; color: #fff; font-size: 12px; font-weight: 600;
 }
+#colorCreate .file { margin-bottom: 8px; }
+#photoHint { margin: 0 0 14px; font-size: 12px; }
 .counts { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin: 8px 0 14px; }
 .counts button.on { background: var(--accent); border-color: transparent; font-weight: 600; }
 .row { display: flex; gap: 8px; }

@@ -33,8 +33,10 @@
 
   <div class="card" id="colorCreate" hidden>
     <h2>New coloring page</h2>
-    <p class="hint">Pick a picture, or start blank</p>
+    <p class="hint">Pick a picture, upload your own, or start blank</p>
     <div class="gallery" id="gallery"></div>
+    <label class="file"><input type="file" id="photoFile" accept="image/*"><span id="photoFileLabel">📷 Upload your own photo</span></label>
+    <p class="hint" id="photoHint">Works best on a simple, clear photo — one subject, not too busy.</p>
     <button id="blankPage" class="primary">✏️ Start on a blank page</button>
   </div>
 
