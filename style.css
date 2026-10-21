@@ -122,6 +122,13 @@ h1 { margin: 8px 0 0; font-size: 28px; }
   border: 3px solid transparent;
 }
 .swatchRow button.on { border-color: #fff; }
+.swatchRow button.recent { box-shadow: inset 0 0 0 1px rgba(255,255,255,.25); }
+.swatchMore {
+  flex: none; width: 34px; height: 34px; border-radius: 50%; padding: 0;
+  background: rgba(255,255,255,.08); border: 2px dashed var(--muted);
+  color: var(--muted); font-size: 18px; line-height: 1; display: grid; place-items: center;
+}
+.shadeRow button { width: 28px; height: 28px; }
 .brushRow { display: flex; align-items: center; gap: 10px; }
 .brush {
   width: 40px; height: 40px; border-radius: 50%; padding: 0; font-size: 18px;

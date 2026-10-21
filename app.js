@@ -38,7 +38,12 @@ const COLOR_PICS = [
   { id: 'cat', label: 'Cat' },
   { id: 'house', label: 'House' },
 ];
-const PALETTE = ['#e63946', '#f3722c', '#f9c74f', '#90be6d', '#43aa8b', '#4d96ff', '#5e60ce', '#b5179e', '#ff70a6', '#8d5524', '#000000', '#ffffff'];
+const PALETTE = [
+  '#e63946', '#f3722c', '#f8961e', '#f9c74f', '#90be6d', '#43aa8b',
+  '#4d96ff', '#277da1', '#5e60ce', '#9d4edd', '#b5179e', '#ff70a6',
+  '#ff9f1c', '#8d5524', '#495057', '#000000', '#ffffff',
+];
+const RECENTS_KEY = 'pt-recent-colors';
 
 let store;
 let me = readJSON('pt-me');
@@ -1063,23 +1068,103 @@ function wireDrawing(stage) {
   stage.on('mouseup touchend mouseleave', () => { if (G.drawing) { G.drawing = false; endStroke(); } });
 }
 
-function buildPalette() {
+// ---- colour: palette + per-hue shade strip + unlimited custom colour (native picker) ----
+function hexToHsl(hex) {
+  const [r, g, b] = hexToRgb(hex).map((v) => v / 255);
+  const max = Math.max(r, g, b), min = Math.min(r, g, b);
+  let h = 0, s = 0;
+  const l = (max + min) / 2;
+  const d = max - min;
+  if (d) {
+    s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+    if (max === r) h = (g - b) / d + (g < b ? 6 : 0);
+    else if (max === g) h = (b - r) / d + 2;
+    else h = (r - g) / d + 4;
+    h /= 6;
+  }
+  return { h: h * 360, s: s * 100, l: l * 100 };
+}
+function hslToHex(h, s, l) {
+  h /= 360; s /= 100; l /= 100;
+  let r, g, b;
+  if (!s) { r = g = b = l; }
+  else {
+    const hue2rgb = (p, q, t) => {
+      if (t < 0) t += 1;
+      if (t > 1) t -= 1;
+      if (t < 1 / 6) return p + (q - p) * 6 * t;
+      if (t < 1 / 2) return q;
+      if (t < 2 / 3) return p + (q - p) * (2 / 3 - t) * 6;
+      return p;
+    };
+    const q = l < 0.5 ? l * (1 + s) : l + s - l * s;
+    const p = 2 * l - q;
+    r = hue2rgb(p, q, h + 1 / 3); g = hue2rgb(p, q, h); b = hue2rgb(p, q, h - 1 / 3);
+  }
+  const toHex = (x) => Math.round(x * 255).toString(16).padStart(2, '0');
+  return '#' + toHex(r) + toHex(g) + toHex(b);
+}
+// 7 lightness steps of the tapped colour's own hue/saturation — tap a base colour, then
+// fine-tune to the exact shade, the way Procreate Pocket / Pigment let you refine a pick.
+function shadesOf(hex, n = 7) {
+  const { h, s } = hexToHsl(hex);
+  const out = [];
+  for (let i = 0; i < n; i++) out.push(hslToHex(h, s, 8 + (84 * i) / (n - 1)));
+  return out;
+}
+function loadRecents() { return readJSON(RECENTS_KEY, []); }
+function pushRecent(hex) {
+  const r = [hex, ...loadRecents().filter((c) => c.toLowerCase() !== hex.toLowerCase())].slice(0, 6);
+  writeJSON(RECENTS_KEY, r);
+}
+
+function makeSwatch(hex, extraClass) {
+  const b = document.createElement('button');
+  b.dataset.hex = hex;
+  b.style.background = hex;
+  if (hex.toLowerCase() === '#ffffff') b.style.boxShadow = 'inset 0 0 0 1px rgba(255,255,255,.4)';
+  if (extraClass) b.className = extraClass;
+  b.onclick = () => selectColor(hex);
+  return b;
+}
+function renderSwatchRow() {
   const row = $('swatchRow');
   row.innerHTML = '';
-  for (const c of PALETTE) {
-    const b = document.createElement('button');
-    b.style.background = c;
-    if (c === '#ffffff') b.style.boxShadow = 'inset 0 0 0 1px rgba(255,255,255,.4)';
-    b.className = c === G.drawColor ? 'on' : '';
-    b.onclick = () => {
-      G.drawColor = c;
-      G.tool = 'draw';
-      $('eraser').classList.remove('on');
-      [...row.children].forEach((x) => x.classList.toggle('on', x === b));
-      updateSizeDot();
-    };
-    row.append(b);
+  for (const c of PALETTE) row.append(makeSwatch(c));
+  const plus = document.createElement('button');
+  plus.className = 'swatchMore';
+  plus.textContent = '+';
+  plus.setAttribute('aria-label', 'Custom color — pick any shade');
+  plus.onclick = () => $('customColorInput').click();
+  row.append(plus);
+  for (const c of loadRecents()) row.append(makeSwatch(c, 'recent'));
+  markSelected();
+}
+function renderShadeRow(hex) {
+  const row = $('shadeRow');
+  row.innerHTML = '';
+  for (const c of shadesOf(hex)) row.append(makeSwatch(c));
+  markSelected();
+}
+function markSelected() {
+  for (const row of [$('swatchRow'), $('shadeRow')]) {
+    for (const x of row.children) x.classList.toggle('on', x.dataset.hex?.toLowerCase() === G.drawColor.toLowerCase());
   }
+}
+function selectColor(hex) {
+  G.drawColor = hex;
+  G.tool = 'draw';
+  $('eraser').classList.remove('on');
+  renderShadeRow(hex);
+  markSelected();
+  updateSizeDot();
+}
+$('customColorInput').oninput = (e) => selectColor(e.target.value); // live preview while dragging
+$('customColorInput').onchange = (e) => { pushRecent(e.target.value); renderSwatchRow(); selectColor(e.target.value); };
+
+function buildPalette() {
+  renderSwatchRow();
+  renderShadeRow(G.drawColor);
 }
 
 const BRUSH_BTN = { marker: 'brushMarker', crayon: 'brushCrayon', watercolor: 'brushWater' };
