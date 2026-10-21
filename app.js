@@ -308,24 +308,11 @@ function toLineArt(img, maxSize = 1100) {
   ctx.drawImage(img, 0, 0, w, h);
   const { data } = ctx.getImageData(0, 0, w, h);
 
-  if (looksLikeLineArt(data)) {
-    let ink = new Uint8Array(w * h);
-    for (let p = 0, i = 0; p < data.length; p += 4, i++) {
-      const lum = data[p] * 0.299 + data[p + 1] * 0.587 + data[p + 2] * 0.114;
-      ink[i] = lum < 200 ? 1 : 0;
-    }
-    // Close a stray 1px gap in the artwork's own outline — otherwise a fill can leak straight
-    // through it into the next shape (e.g. a beard bleeding into the face behind it).
-    ink = dilateMask(ink, w, h);
-    const out = ctx.createImageData(w, h);
-    for (let i = 0; i < ink.length; i++) {
-      const v = ink[i] ? 0 : 255;
-      const o = i * 4;
-      out.data[o] = v; out.data[o + 1] = v; out.data[o + 2] = v; out.data[o + 3] = 255;
-    }
-    ctx.putImageData(out, 0, 0);
-    return c.toDataURL('image/png');
-  }
+  // Already clean line art (a downloaded coloring page, an AI-generated one, etc.) — keep every
+  // pixel exactly as drawn, antialiasing and all, so it looks identical to what was uploaded.
+  // computeRegions() gets its own, separate gap-closing pass purely for flood-fill purposes —
+  // that's an invisible internal decision, never something baked into the picture you see.
+  if (looksLikeLineArt(data)) return c.toDataURL('image/png');
 
   let gray = new Float32Array(w * h);
   for (let i = 0, p = 0; i < gray.length; i++, p += 4) gray[i] = data[p] * 0.299 + data[p + 1] * 0.587 + data[p + 2] * 0.114;
@@ -901,11 +888,15 @@ function computeRegions(imgEl) {
   const ctx = c.getContext('2d', { willReadFrequently: true });
   ctx.drawImage(imgEl, 0, 0, w, h);
   const { data } = ctx.getImageData(0, 0, w, h);
-  const ink = new Uint8Array(w * h);
+  let ink = new Uint8Array(w * h);
   for (let p = 0, i = 0; p < data.length; p += 4, i++) {
     const lum = data[p] * 0.299 + data[p + 1] * 0.587 + data[p + 2] * 0.114;
     ink[i] = lum < 200 || data[p + 3] < 128 ? 1 : 0; // dark (outline) or transparent = wall
   }
+  // This mask only decides which side of a line a colour belongs to — it's never shown; the
+  // actual line art is drawn on top afterwards. So it's safe to close a stray hairline gap here
+  // (otherwise a fill could leak straight through it, e.g. a beard bleeding into the face).
+  ink = dilateMask(ink, w, h);
   const label = new Int32Array(w * h).fill(-1);
   const pixels = [];
   const qx = new Int32Array(w * h), qy = new Int32Array(w * h);
