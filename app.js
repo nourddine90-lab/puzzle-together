@@ -924,7 +924,56 @@ function computeRegions(imgEl) {
       nextId++;
     }
   }
-  return { w, h, label, pixels };
+  return mergeSliverRegions(w, h, label, pixels);
+}
+
+// A decorative inner line (a shirt's fold, a rug's seam) still fully encloses its own sliver of
+// paper on each side, so the flood fill above happily treats that sliver as its own region —
+// then a tap on the big shape next to it leaves that thin strip unfilled. A real coloring book
+// doesn't work that way: you'd just colour straight over a wrinkle line. So any region that's
+// thin in its narrowest dimension (not a small round thing like an eye, which stays separate on
+// purpose) gets folded into whichever neighbouring region borders it most.
+function mergeSliverRegions(w, h, label, pixels) {
+  const THIN_PX = 7;
+  const parent = pixels.map((_, i) => i);
+  const find = (a) => { while (parent[a] !== a) { parent[a] = parent[parent[a]]; a = parent[a]; } return a; };
+
+  for (let id = 0; id < pixels.length; id++) {
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    for (const idx of pixels[id]) {
+      const x = idx % w, y = (idx / w) | 0;
+      if (x < minX) minX = x; if (x > maxX) maxX = x;
+      if (y < minY) minY = y; if (y > maxY) maxY = y;
+    }
+    if (Math.min(maxX - minX + 1, maxY - minY + 1) > THIN_PX) continue; // a real shape, leave it alone
+
+    const neighbourVotes = new Map();
+    for (const idx of pixels[id]) {
+      const x = idx % w, y = (idx / w) | 0;
+      for (const [nx, ny] of [[x - 1, y], [x + 1, y], [x, y - 1], [x, y + 1]]) {
+        if (nx < 0 || ny < 0 || nx >= w || ny >= h) continue;
+        const nid = label[ny * w + nx];
+        if (nid === -1 || nid === id) continue;
+        const root = find(nid);
+        neighbourVotes.set(root, (neighbourVotes.get(root) || 0) + 1);
+      }
+    }
+    let best = -1, bestVotes = 0;
+    for (const [root, votes] of neighbourVotes) if (votes > bestVotes) { best = root; bestVotes = votes; }
+    if (best !== -1) parent[find(id)] = best;
+  }
+
+  const mergedPixels = [];
+  const idOf = new Map();
+  for (let i = 0; i < label.length; i++) {
+    if (label[i] === -1) continue;
+    const root = find(label[i]);
+    let fid = idOf.get(root);
+    if (fid === undefined) { fid = mergedPixels.length; mergedPixels.push([]); idOf.set(root, fid); }
+    mergedPixels[fid].push(i);
+    label[i] = fid;
+  }
+  return { w, h, label, pixels: mergedPixels.map((p) => Int32Array.from(p)) };
 }
 
 function paintRegion(regionId, color) {
