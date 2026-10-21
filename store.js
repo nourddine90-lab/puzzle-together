@@ -49,6 +49,7 @@ async function firebaseStore(cfg) {
         offs.push(
           D.onChildAdded(r, (s) => h.onRegion(s.key, s.val())),
           D.onChildChanged(r, (s) => h.onRegion(s.key, s.val())),
+          D.onChildRemoved(r, (s) => h.onRegion(s.key, null)), // the other player undid this fill
         );
       }
       if (h.onStroke) {
@@ -56,6 +57,7 @@ async function firebaseStore(cfg) {
         offs.push(
           D.onChildAdded(st, (s) => h.onStroke(s.key, s.val())),
           D.onChildChanged(st, (s) => h.onStroke(s.key, s.val())),
+          D.onChildRemoved(st, (s) => h.onStroke(s.key, null)), // the other player undid this stroke
         );
       }
       if (h.onClear) offs.push(D.onValue(ref(code, 'meta/clearSeq'), (s) => h.onClear(s.val() || 0)));

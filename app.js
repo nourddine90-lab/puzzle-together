@@ -1,5 +1,5 @@
 import { createStore } from './store.js';
-import { click, chime, unlockAudio } from './sound.js';
+import { playSnap, playPop, playChime, unlockAudio } from './sound.js';
 
 /*
  * Data model (same online and offline). Two kinds of room share one "rooms/<CODE>" record:
@@ -577,7 +577,7 @@ function trySnap(gid) {
   }
   n.position(posOf(n));
   commit({ ['groups/' + cur]: { ...posOf(n), rot: g.rot || 0 } });
-  if (snapped) click();
+  if (snapped) playSnap();
   return cur;
 }
 
@@ -609,7 +609,7 @@ function onPiece(i, gid, remote) {
   if (attach(i, gid) && remote) {
     nodeOf(gid).moveToTop();
     clearTimeout(softTimer);
-    softTimer = setTimeout(() => click(true), 40);
+    softTimer = setTimeout(() => playSnap(true), 40);
     updateProgress();
   }
 }
@@ -652,7 +652,7 @@ function updateProgress() {
     remember(G.code, { pct });
     if (k === 1 && !G.done) {
       G.done = true;
-      chime();
+      playChime();
       fit();
       $('win').hidden = false;
     }
@@ -790,13 +790,42 @@ function refreshPaint() {
   G.layer.batchDraw();
 }
 
+// Eases a region from its current colour to a new one over a few frames, instead of a hard swap —
+// this is what makes a fill feel like paint flowing in rather than a flat colour-replace.
+function animateRegionFill(rid, toColor) {
+  const pix = G.regionPixels[rid];
+  if (!pix) return;
+  const thisGame = G; // closure guard: if the player leaves mid-animation, G is replaced/nulled
+  const fromColor = G.regionColors.get(rid) || '#ffffff';
+  if (toColor) G.regionColors.set(rid, toColor); else G.regionColors.delete(rid);
+  const [fr, fg, fb] = hexToRgb(fromColor);
+  const [tr, tg, tb] = hexToRgb(toColor || '#ffffff');
+  const data = G.paintData.data;
+  const start = performance.now(), dur = 380;
+  function step(now) {
+    if (G !== thisGame) return; // game was closed or swapped — stop touching its canvas
+    const t = Math.min(1, (now - start) / dur);
+    const e = 1 - Math.pow(1 - t, 3); // ease-out cubic
+    const r = fr + (tr - fr) * e, g = fg + (tg - fg) * e, b = fb + (tb - fb) * e;
+    for (const idx of pix) { const o = idx * 4; data[o] = r; data[o + 1] = g; data[o + 2] = b; data[o + 3] = 255; }
+    refreshPaint();
+    if (t < 1) requestAnimationFrame(step);
+  }
+  requestAnimationFrame(step);
+}
+
+// A quick expanding, fading ring at the tap point — purely cosmetic, makes a fill feel responsive.
+function rippleAt(x, y, color) {
+  const ring = new Konva.Circle({ x, y, radius: 2, stroke: color, strokeWidth: 6, opacity: 0.6, listening: false });
+  G.fxLayer.add(ring);
+  ring.to({ radius: G.S ? G.S * 1.4 : 70, strokeWidth: 0.5, opacity: 0, duration: 0.45, easing: Konva.Easings.EaseOut, onFinish: () => ring.destroy() });
+}
+
 function onRegion(id, color) {
-  if (!G || G.kind !== 'color' || G.mode !== 'fill' || !color) return;
+  if (!G || G.kind !== 'color' || G.mode !== 'fill') return;
   const rid = +id;
-  if (G.regionColors.get(rid) === color) return;
-  G.regionColors.set(rid, color);
-  paintRegion(rid, color);
-  refreshPaint();
+  if ((G.regionColors.get(rid) || null) === (color || null)) return;
+  animateRegionFill(rid, color);
 }
 
 function onFillTap() {
@@ -819,38 +848,65 @@ function onFillTap() {
   }
   if (rid === -1) return;
   const color = G.drawColor;
-  G.regionColors.set(rid, color);
-  paintRegion(rid, color);
-  refreshPaint();
-  click(true);
+  animateRegionFill(rid, color);
+  rippleAt(pos.x, pos.y, color);
+  playPop();
+  if (!G.myRegions.includes(rid)) G.myRegions.push(rid);
   store.update(G.code, { ['regions/' + rid]: color }).catch((e) => toast('Sync error: ' + e.message, 3000));
 }
 
-function strokeSegment(x0, y0, x1, y1, color, width) {
-  const ctx = G.compositeCtx;
-  ctx.strokeStyle = color; ctx.lineWidth = width; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
-  ctx.beginPath(); ctx.moveTo(x0, y0); ctx.lineTo(x1, y1); ctx.stroke();
+// ---- drawing: brush styles (marker/crayon/watercolor) ----
+function applyBrushStyle(ctx, type, width) {
+  ctx.lineCap = 'round'; ctx.lineJoin = 'round'; ctx.filter = 'none';
+  if (type === 'watercolor') { ctx.filter = 'blur(2px)'; ctx.globalAlpha = 0.38; }
+  else if (type === 'crayon') { ctx.globalAlpha = 0.88; }
+  else { ctx.globalAlpha = 1; }
+  ctx.lineWidth = width;
 }
-function drawDot(x, y, color, width) {
+function resetBrushStyle(ctx) { ctx.filter = 'none'; ctx.globalAlpha = 1; }
+
+function strokeSegment(x0, y0, x1, y1, color, width, type = 'marker') {
+  const ctx = G.compositeCtx;
+  ctx.strokeStyle = color;
+  applyBrushStyle(ctx, type, width);
+  ctx.beginPath(); ctx.moveTo(x0, y0); ctx.lineTo(x1, y1); ctx.stroke();
+  if (type === 'crayon') { // a second faint, wider pass gives the stroke a waxy, grainy edge
+    ctx.globalAlpha = 0.16; ctx.lineWidth = width * 1.5;
+    ctx.beginPath(); ctx.moveTo(x0, y0); ctx.lineTo(x1, y1); ctx.stroke();
+  }
+  resetBrushStyle(ctx);
+}
+function drawDot(x, y, color, width, type = 'marker') {
   const ctx = G.compositeCtx;
   ctx.fillStyle = color;
+  applyBrushStyle(ctx, type, width);
   ctx.beginPath(); ctx.arc(x, y, width / 2, 0, Math.PI * 2); ctx.fill();
+  resetBrushStyle(ctx);
+}
+
+function currentDrawParams() {
+  if (G.tool === 'erase') return { color: '#ffffff', width: G.brushSize * 1.8, type: 'marker' };
+  return { color: G.drawColor, width: G.brushSize, type: G.brushType };
 }
 
 function beginStroke(x, y) {
   const id = 's' + Math.random().toString(36).slice(2, 10);
-  G.currentStroke = { id, uid: store.uid, color: G.drawColor, width: G.brushSize, points: [[Math.round(x), Math.round(y)]] };
-  drawDot(x, y, G.drawColor, G.brushSize);
+  const { color, width, type } = currentDrawParams();
+  G.currentStroke = { id, uid: store.uid, color, width, type, points: [[Math.round(x), Math.round(y)]] };
+  drawDot(x, y, color, width, type);
   G.remoteCursors.set(id, 1); // we already drew this locally — onStroke should pick up from here, not redraw it
+  G.allStrokes.set(id, G.currentStroke);
+  G.myStrokes.push(id);
   G.layer.batchDraw();
 }
 function continueStroke(x, y) {
   if (!G.currentStroke) return;
-  const pts = G.currentStroke.points;
+  const s = G.currentStroke;
+  const pts = s.points;
   const [px, py] = pts[pts.length - 1];
   pts.push([Math.round(x), Math.round(y)]);
-  strokeSegment(px, py, x, y, G.currentStroke.color, G.currentStroke.width);
-  G.remoteCursors.set(G.currentStroke.id, pts.length);
+  strokeSegment(px, py, x, y, s.color, s.width, s.type);
+  G.remoteCursors.set(s.id, pts.length);
   G.layer.batchDraw();
   const t = performance.now();
   if (t - G.lastSync > 70) { G.lastSync = t; syncStroke(); }
@@ -862,19 +918,40 @@ function endStroke() {
 }
 function syncStroke() {
   const s = G.currentStroke;
-  store.update(G.code, { ['strokes/' + s.id]: { uid: s.uid, color: s.color, width: s.width, points: s.points } }).catch(() => {});
+  store.update(G.code, { ['strokes/' + s.id]: { uid: s.uid, color: s.color, width: s.width, brush: s.type, points: s.points } }).catch(() => {});
 }
 
 // Draws only the segments not drawn yet for this stroke id — safe whether the update is this
 // phone's own echoed write or the other player's, so there's no need to special-case "my own".
+// s === null means the stroke was undone/removed: drop it and redraw the page from what's left.
 function onStroke(id, s) {
-  if (!G || G.kind !== 'color' || G.mode !== 'draw' || !s?.points?.length) return;
+  if (!G || G.kind !== 'color' || G.mode !== 'draw') return;
+  if (!s) { G.allStrokes.delete(id); redrawAll(); return; }
+  if (!s.points?.length) return;
+  const type = s.brush || 'marker';
+  G.allStrokes.set(id, { color: s.color, width: s.width, type, points: s.points });
   const have = G.remoteCursors.get(id) || 0;
   const pts = s.points;
   if (have >= pts.length) return;
-  if (!have) drawDot(pts[0][0], pts[0][1], s.color, s.width);
-  for (let i = Math.max(have, 1); i < pts.length; i++) strokeSegment(pts[i - 1][0], pts[i - 1][1], pts[i][0], pts[i][1], s.color, s.width);
+  if (!have) drawDot(pts[0][0], pts[0][1], s.color, s.width, type);
+  for (let i = Math.max(have, 1); i < pts.length; i++) strokeSegment(pts[i - 1][0], pts[i - 1][1], pts[i][0], pts[i][1], s.color, s.width, type);
   G.remoteCursors.set(id, pts.length);
+  G.layer.batchDraw();
+}
+
+// Full repaint from everything currently known (used after an undo, since a single stroke can't
+// be "unpainted" from a flat canvas — only replayed from scratch without it).
+function redrawAll() {
+  G.compositeCtx.filter = 'none'; G.compositeCtx.globalAlpha = 1;
+  G.compositeCtx.fillStyle = '#fff';
+  G.compositeCtx.fillRect(0, 0, G.W, G.H);
+  G.remoteCursors.clear();
+  for (const [id, s] of G.allStrokes) {
+    if (!s?.points?.length) continue;
+    drawDot(s.points[0][0], s.points[0][1], s.color, s.width, s.type);
+    for (let i = 1; i < s.points.length; i++) strokeSegment(s.points[i - 1][0], s.points[i - 1][1], s.points[i][0], s.points[i][1], s.color, s.width, s.type);
+    G.remoteCursors.set(id, s.points.length);
+  }
   G.layer.batchDraw();
 }
 
@@ -905,23 +982,53 @@ function buildPalette() {
     b.className = c === G.drawColor ? 'on' : '';
     b.onclick = () => {
       G.drawColor = c;
+      G.tool = 'draw';
       $('eraser').classList.remove('on');
       [...row.children].forEach((x) => x.classList.toggle('on', x === b));
+      updateSizeDot();
     };
     row.append(b);
   }
 }
-function setBrush(size, id) {
-  G.brushSize = size;
-  for (const b of ['brushS', 'brushM', 'brushL']) $(b).classList.toggle('on', b === id);
+
+const BRUSH_BTN = { marker: 'brushMarker', crayon: 'brushCrayon', watercolor: 'brushWater' };
+function setBrushType(type) {
+  G.brushType = type;
+  G.tool = 'draw';
+  for (const t in BRUSH_BTN) $(BRUSH_BTN[t]).classList.toggle('on', t === type);
+  $('eraser').classList.remove('on');
+  updateSizeDot();
 }
-$('brushS').onclick = () => setBrush(6, 'brushS');
-$('brushM').onclick = () => setBrush(12, 'brushM');
-$('brushL').onclick = () => setBrush(22, 'brushL');
+function updateSizeDot() {
+  const d = $('sizeDot');
+  const s = Math.max(6, Math.min(40, G.brushSize));
+  d.style.width = s + 'px'; d.style.height = s + 'px';
+  d.style.background = G.tool === 'erase' ? '#fff' : G.drawColor;
+  d.style.opacity = G.brushType === 'watercolor' && G.tool !== 'erase' ? 0.5 : 1;
+}
+$('brushMarker').onclick = () => setBrushType('marker');
+$('brushCrayon').onclick = () => setBrushType('crayon');
+$('brushWater').onclick = () => setBrushType('watercolor');
+$('brushSizeInput').oninput = (e) => { G.brushSize = +e.target.value; updateSizeDot(); };
 $('eraser').onclick = () => {
-  G.drawColor = '#ffffff';
-  $('eraser').classList.toggle('on', true);
-  [...$('swatchRow').children].forEach((x) => x.classList.remove('on'));
+  G.tool = G.tool === 'erase' ? 'draw' : 'erase';
+  $('eraser').classList.toggle('on', G.tool === 'erase');
+  updateSizeDot();
+};
+$('undoBtn').onclick = () => {
+  if (!G || G.kind !== 'color') return;
+  if (G.mode === 'fill') {
+    const rid = G.myRegions.pop();
+    if (rid === undefined) return;
+    animateRegionFill(rid, null);
+    store.update(G.code, { ['regions/' + rid]: null }).catch(() => {});
+  } else {
+    const id = G.myStrokes.pop();
+    if (!id) return;
+    G.allStrokes.delete(id);
+    redrawAll();
+    store.update(G.code, { ['strokes/' + id]: null }).catch(() => {});
+  }
 };
 $('clearPage').onclick = () => {
   if (!G || G.kind !== 'color') return;
@@ -933,10 +1040,14 @@ $('clearPage').onclick = () => {
 };
 function wipeCanvas() {
   G.compositeCtx.globalCompositeOperation = 'source-over';
+  G.compositeCtx.filter = 'none'; G.compositeCtx.globalAlpha = 1;
   G.compositeCtx.fillStyle = '#fff';
   G.compositeCtx.fillRect(0, 0, G.W, G.H);
   G.regionColors.clear();
   G.remoteCursors.clear();
+  G.allStrokes.clear();
+  G.myStrokes = [];
+  G.myRegions = [];
   if (G.mode === 'fill' && G.paintData) { G.paintData.data.fill(255); refreshPaint(); }
   G.layer.batchDraw();
 }
@@ -949,15 +1060,18 @@ async function startColorGame(code, data) {
   const mode = data.meta.mode, W = data.meta.w, H = data.meta.h;
   G = {
     kind: 'color', mode, code, W, H, clearSeq: data.meta.clearSeq || 0,
-    regionColors: new Map(), remoteCursors: new Map(), players: {}, holds: {},
-    drawColor: PALETTE[0], brushSize: 12, currentStroke: null, drawing: false, lastSync: 0,
+    regionColors: new Map(), remoteCursors: new Map(), allStrokes: new Map(),
+    myStrokes: [], myRegions: [], players: {}, holds: {},
+    drawColor: PALETTE[0], brushType: 'marker', tool: 'draw', brushSize: 12,
+    currentStroke: null, drawing: false, lastSync: 0,
   };
 
   Konva.hitOnDragEnabled = true;
   const stage = new Konva.Stage({ container: 'stage', width: innerWidth, height: innerHeight, draggable: mode === 'fill' });
   G.stage = stage;
   G.layer = new Konva.Layer();
-  stage.add(G.layer);
+  G.fxLayer = new Konva.Layer({ listening: false });
+  stage.add(G.layer, G.fxLayer);
 
   const canvas = document.createElement('canvas');
   canvas.width = W; canvas.height = H;
@@ -979,9 +1093,11 @@ async function startColorGame(code, data) {
   } else {
     for (const [id, s] of Object.entries(data.strokes || {})) {
       if (!s?.points?.length) continue;
-      drawDot(s.points[0][0], s.points[0][1], s.color, s.width);
-      for (let i = 1; i < s.points.length; i++) strokeSegment(s.points[i - 1][0], s.points[i - 1][1], s.points[i][0], s.points[i][1], s.color, s.width);
+      const type = s.brush || 'marker';
+      drawDot(s.points[0][0], s.points[0][1], s.color, s.width, type);
+      for (let i = 1; i < s.points.length; i++) strokeSegment(s.points[i - 1][0], s.points[i - 1][1], s.points[i][0], s.points[i][1], s.color, s.width, type);
       G.remoteCursors.set(id, s.points.length);
+      G.allStrokes.set(id, { color: s.color, width: s.width, type, points: s.points });
     }
   }
 
@@ -992,7 +1108,11 @@ async function startColorGame(code, data) {
 
   $('ghost').hidden = true;
   $('palette').hidden = false;
-  $('brushRow').style.display = mode === 'draw' ? 'flex' : 'none';
+  $('brushTypeRow').style.display = mode === 'draw' ? 'flex' : 'none';
+  $('sizeRow').style.display = mode === 'draw' ? 'flex' : 'none';
+  if (mode === 'draw') setBrushType('marker');
+  $('brushSizeInput').value = G.brushSize;
+  updateSizeDot();
   buildPalette();
   fit();
   setupGestures(stage);

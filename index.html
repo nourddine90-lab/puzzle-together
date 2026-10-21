@@ -70,13 +70,20 @@
   </div>
   <div id="palette" hidden>
     <div class="swatchRow" id="swatchRow"></div>
-    <div class="brushRow" id="brushRow">
-      <button id="brushS" class="brush" aria-label="Thin brush"><i style="width:6px;height:6px"></i></button>
-      <button id="brushM" class="brush on" aria-label="Medium brush"><i style="width:12px;height:12px"></i></button>
-      <button id="brushL" class="brush" aria-label="Thick brush"><i style="width:20px;height:20px"></i></button>
-      <button id="eraser" class="icon" aria-label="Eraser">🧹</button>
+    <div class="brushRow" id="brushTypeRow">
+      <button id="brushMarker" class="brush on" aria-label="Marker">🖊️</button>
+      <button id="brushCrayon" class="brush" aria-label="Crayon">🖍️</button>
+      <button id="brushWater" class="brush" aria-label="Watercolor">🖌️</button>
+      <button id="eraser" class="brush" aria-label="Eraser">🧹</button>
     </div>
-    <button id="clearPage" class="icon" aria-label="Clear everything">🗑</button>
+    <div class="sizeRow" id="sizeRow">
+      <span class="sizeDot" id="sizeDot"></span>
+      <input type="range" id="brushSizeInput" min="4" max="40" value="12">
+    </div>
+    <div class="actionRow">
+      <button id="undoBtn" class="icon" aria-label="Undo">↩️</button>
+      <button id="clearPage" class="icon" aria-label="Clear everything">🗑</button>
+    </div>
   </div>
   <div id="win" hidden>
     <div>
