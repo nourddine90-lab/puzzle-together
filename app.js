@@ -894,8 +894,13 @@ function computeRegions(imgEl) {
     ink[i] = lum < 200 || data[p + 3] < 128 ? 1 : 0; // dark (outline) or transparent = wall
   }
   // This mask only decides which side of a line a colour belongs to — it's never shown; the
-  // actual line art is drawn on top afterwards. So it's safe to close a stray hairline gap here
-  // (otherwise a fill could leak straight through it, e.g. a beard bleeding into the face).
+  // actual line art is drawn on top afterwards. So it's safe to close gaps here: a stray hairline
+  // break (otherwise a fill could leak through it, e.g. a beard bleeding into the face), and the
+  // fragments of antialiasing along a curve (a round hairline, glasses rim) that would otherwise
+  // form tiny flecks of "paper" fully boxed in by ink on every side — those can never be reached
+  // by any fill, so they'd always show as an uncoloured sliver no matter what you tap. Two passes
+  // reliably swallow both without visibly thickening the line you actually see.
+  ink = dilateMask(ink, w, h);
   ink = dilateMask(ink, w, h);
   const label = new Int32Array(w * h).fill(-1);
   const pixels = [];
