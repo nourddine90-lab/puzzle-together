@@ -1161,11 +1161,34 @@ function currentDrawParams() {
   return { color: G.drawColor, width: G.brushSize, type: G.brushType };
 }
 
+// ---- brush sensitivity: each point carries a width factor (3rd value, 1 = slider size) ----
+// A pen reports real pressure; a finger can't, so speed stands in for it (slow = thick, fast = thin).
+const lastPointer = { type: 'mouse', pressure: 0.5 };
+for (const ev of ['pointerdown', 'pointermove']) {
+  addEventListener(ev, (e) => { lastPointer.type = e.pointerType; lastPointer.pressure = e.pressure; }, { passive: true });
+}
+const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+function widthFactor(speedPxPerMs) {
+  if (G.tool === 'erase') return 1;
+  if (lastPointer.type === 'pen' && lastPointer.pressure > 0) return clamp(0.25 + lastPointer.pressure * 1.5, 0.25, 1.75);
+  return clamp(1.4 - speedPxPerMs * 0.45, 0.35, 1.4);
+}
+const ptWidth = (s, p) => s.width * (p[2] ?? 1);
+function replayStroke(s, type, from = 0) {
+  const pts = s.points;
+  if (from === 0) drawDot(pts[0][0], pts[0][1], s.color, ptWidth(s, pts[0]), type);
+  for (let i = Math.max(from, 1); i < pts.length; i++) {
+    strokeSegment(pts[i - 1][0], pts[i - 1][1], pts[i][0], pts[i][1], s.color, (ptWidth(s, pts[i - 1]) + ptWidth(s, pts[i])) / 2, type);
+  }
+}
+
 function beginStroke(x, y) {
   const id = 's' + Math.random().toString(36).slice(2, 10);
   const { color, width, type } = currentDrawParams();
-  G.currentStroke = { id, uid: store.uid, color, width, type, points: [[Math.round(x), Math.round(y)]] };
-  drawDot(x, y, color, width, type);
+  const f = +widthFactor(0).toFixed(2);
+  G.currentStroke = { id, uid: store.uid, color, width, type, points: [[Math.round(x), Math.round(y), f]] };
+  G.lastPt = { t: performance.now(), f };
+  drawDot(x, y, color, width * f, type);
   G.remoteCursors.set(id, 1); // we already drew this locally — onStroke should pick up from here, not redraw it
   G.allStrokes.set(id, G.currentStroke);
   G.history.push({ kind: 'stroke', id });
@@ -1175,9 +1198,14 @@ function continueStroke(x, y) {
   if (!G.currentStroke) return;
   const s = G.currentStroke;
   const pts = s.points;
-  const [px, py] = pts[pts.length - 1];
-  pts.push([Math.round(x), Math.round(y)]);
-  strokeSegment(px, py, x, y, s.color, s.width, s.type);
+  const prev = pts[pts.length - 1];
+  const now = performance.now();
+  const screenDist = Math.hypot(x - prev[0], y - prev[1]) * G.stage.scaleX();
+  const speed = screenDist / Math.max(8, now - G.lastPt.t);
+  const f = +(G.lastPt.f * 0.65 + widthFactor(speed) * 0.35).toFixed(2); // smoothed so width never jumps
+  G.lastPt = { t: now, f };
+  pts.push([Math.round(x), Math.round(y), f]);
+  strokeSegment(prev[0], prev[1], x, y, s.color, (ptWidth(s, prev) + s.width * f) / 2, s.type);
   G.remoteCursors.set(s.id, pts.length);
   showStrokes();
   const t = performance.now();
@@ -1205,8 +1233,7 @@ function onStroke(id, s) {
   const have = G.remoteCursors.get(id) || 0;
   const pts = s.points;
   if (have >= pts.length) return;
-  if (!have) drawDot(pts[0][0], pts[0][1], s.color, s.width, type);
-  for (let i = Math.max(have, 1); i < pts.length; i++) strokeSegment(pts[i - 1][0], pts[i - 1][1], pts[i][0], pts[i][1], s.color, s.width, type);
+  replayStroke(s, type, have);
   G.remoteCursors.set(id, pts.length);
   showStrokes();
 }
@@ -1233,8 +1260,7 @@ function redrawAll() {
   G.remoteCursors.clear();
   for (const [id, s] of G.allStrokes) {
     if (!s?.points?.length) continue;
-    drawDot(s.points[0][0], s.points[0][1], s.color, s.width, s.type);
-    for (let i = 1; i < s.points.length; i++) strokeSegment(s.points[i - 1][0], s.points[i - 1][1], s.points[i][0], s.points[i][1], s.color, s.width, s.type);
+    replayStroke(s, s.type);
     G.remoteCursors.set(id, s.points.length);
   }
   showStrokes();
@@ -1510,8 +1536,7 @@ async function startColorGame(code, data, preloadedImg) {
   for (const [id, s] of Object.entries(data.strokes || {})) {
     if (!s?.points?.length) continue;
     const type = s.brush || 'marker';
-    drawDot(s.points[0][0], s.points[0][1], s.color, s.width, type);
-    for (let i = 1; i < s.points.length; i++) strokeSegment(s.points[i - 1][0], s.points[i - 1][1], s.points[i][0], s.points[i][1], s.color, s.width, type);
+    replayStroke(s, type);
     G.remoteCursors.set(id, s.points.length);
     G.allStrokes.set(id, { color: s.color, width: s.width, type, points: s.points });
   }
