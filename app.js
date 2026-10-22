@@ -1056,8 +1056,38 @@ function onRegion(id, color) {
   animateRegionFill(rid, color);
 }
 
+// Eyedropper. In fill mode it reads the colour layer under the line art, so tapping right on a
+// black outline still gives the fill colour beside it rather than black.
+function pickColorAt(x, y) {
+  x = Math.max(0, Math.min(G.W - 1, Math.round(x)));
+  y = Math.max(0, Math.min(G.H - 1, Math.round(y)));
+  let rgb;
+  if (G.mode === 'fill') {
+    const b = G.brushCtx.getImageData(x, y, 1, 1).data;
+    const o = (y * G.W + x) * 4, p = G.paintData.data;
+    const a = b[3] / 255;
+    rgb = [0, 1, 2].map((i) => Math.round(b[i] * a + p[o + i] * (1 - a)));
+  } else {
+    rgb = [...G.compositeCtx.getImageData(x, y, 1, 1).data.slice(0, 3)];
+  }
+  const hex = '#' + rgb.map((v) => v.toString(16).padStart(2, '0')).join('');
+  setPicking(false);
+  setPick(hex);
+  selectColor(hex);
+  pushRecent(hex);
+  renderSwatches();
+  rippleAt(x, y, hex);
+  toast('Color picked 🎨', 1200);
+}
+function setPicking(on) {
+  G.picking = on;
+  $('pickerBtn').classList.toggle('on', on);
+  if (G.mode === 'fill') G.stage.draggable(!on && G.fillTool === 'fill');
+}
+$('pickerBtn').onclick = () => { closePanels(); setPicking(!G.picking); if (G.picking) toast('Tap the picture to pick a color', 1600); };
+
 function onFillTap() {
-  if (G.fillTool === 'brush') return;
+  if (G.fillTool === 'brush' || G.picking) return;
   const pos = G.konvaImage.getRelativePointerPosition();
   let x = Math.round(pos.x), y = Math.round(pos.y);
   if (x < 0 || y < 0 || x >= G.W || y >= G.H) return;
@@ -1226,6 +1256,11 @@ function wireDrawing(stage) {
   const hideRing = () => { ring.visible(false); G.fxLayer.batchDraw(); };
   stage.on('mousedown touchstart', (e) => {
     if (!within1(e)) { hideRing(); return; }
+    if (G.picking) {
+      const q = G.konvaImage.getRelativePointerPosition();
+      if (q.x >= 0 && q.y >= 0 && q.x <= G.W && q.y <= G.H) pickColorAt(q.x, q.y);
+      return;
+    }
     if (!brushOn()) return;
     const p = G.konvaImage.getRelativePointerPosition();
     if (p.x < 0 || p.y < 0 || p.x > G.W || p.y > G.H) return;
@@ -1363,6 +1398,8 @@ $('closeColor').onclick = closePanels;
 // 'fill' = tap a shape; 'brush' = paint freely (under the lines in fill mode); 'erase'.
 // Painting tools stop one-finger panning; pinch still zooms.
 function setTool(t) {
+  G.picking = false;
+  $('pickerBtn').classList.remove('on');
   G.fillTool = t === 'fill' ? 'fill' : 'brush';
   G.tool = t === 'erase' ? 'erase' : 'draw';
   $('toolFill').classList.toggle('on', t === 'fill');
