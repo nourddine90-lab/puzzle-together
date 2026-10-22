@@ -985,20 +985,21 @@ function mergeSliverRegions(w, h, label, pixels) {
   return { w, h, label, pixels: mergedPixels.map((p) => Int32Array.from(p)) };
 }
 
-// The outline's own antialiasing fades gradually from black to white right next to a line — those
-// pale pixels are rightly excluded from any fillable region (so the line itself never gets
-// painted over), but since nothing ever colours them either, they'd sit there unchanged as a pale
-// gap between a saturated fill and the line's solid core. Painting 1px further than each region's
-// exact pixels — into that fringe — closes the gap; the true dark line still wins on top, since
-// refreshPaint() always multiplies the real artwork over the fill afterwards.
-function dilatePixelSet(idxArray, w, h) {
+// Grow only into line/antialias pixels (and tiny specks) so colour reaches the dark line core
+// without spilling into a real neighbouring region; multiply keeps the line itself black.
+function dilatePixelSet(idxArray, w, h, label, tiny, steps = 4) {
   const grown = new Set(idxArray);
-  for (const idx of idxArray) {
-    const x = idx % w, y = (idx / w) | 0;
-    if (x > 0) grown.add(idx - 1);
-    if (x < w - 1) grown.add(idx + 1);
-    if (y > 0) grown.add(idx - w);
-    if (y < h - 1) grown.add(idx + w);
+  let frontier = idxArray;
+  for (let s = 0; s < steps; s++) {
+    const next = [];
+    for (const idx of frontier) {
+      const x = idx % w, y = (idx / w) | 0;
+      const nb = [x > 0 ? idx - 1 : -1, x < w - 1 ? idx + 1 : -1, y > 0 ? idx - w : -1, y < h - 1 ? idx + w : -1];
+      for (const n of nb) {
+        if (n >= 0 && (label[n] === -1 || tiny[label[n]]) && !grown.has(n)) { grown.add(n); next.push(n); }
+      }
+    }
+    frontier = next;
   }
   return Int32Array.from(grown);
 }
@@ -1409,7 +1410,8 @@ async function startColorGame(code, data, preloadedImg) {
     const img = preloadedImg || await loadImage(data.image);
     const regions = computeRegions(img);
     G.label = regions.label; G.regionPixels = regions.pixels; G.lineImg = img;
-    G.paintPixels = regions.pixels.map((p) => dilatePixelSet(p, W, H));
+    const tiny = regions.pixels.map((p) => p.length < 30);
+    G.paintPixels = regions.pixels.map((p) => dilatePixelSet(p, W, H, regions.label, tiny));
     G.paintData = new ImageData(new Uint8ClampedArray(W * H * 4).fill(255), W, H);
     for (const [id, color] of Object.entries(data.regions || {})) {
       G.regionColors.set(+id, color);
