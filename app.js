@@ -891,7 +891,11 @@ function computeRegions(imgEl) {
   let ink = new Uint8Array(w * h);
   for (let p = 0, i = 0; p < data.length; p += 4, i++) {
     const lum = data[p] * 0.299 + data[p + 1] * 0.587 + data[p + 2] * 0.114;
-    ink[i] = lum < 200 || data[p + 3] < 128 ? 1 : 0; // dark (outline) or transparent = wall
+    // Generously inclusive on purpose: this mask is only used to decide which side of a line a
+    // colour belongs to (never shown — the real line art is drawn on top afterwards), so it's
+    // fine to swallow the whole antialiased grey band around a curve into "wall" at the source,
+    // rather than let it become its own sliver of paper that a fill can never actually reach.
+    ink[i] = lum < 235 || data[p + 3] < 128 ? 1 : 0; // dark/greyish (outline + its AA halo) or transparent = wall
   }
   // This mask only decides which side of a line a colour belongs to — it's never shown; the
   // actual line art is drawn on top afterwards. So it's safe to close gaps here: a stray hairline
@@ -981,8 +985,26 @@ function mergeSliverRegions(w, h, label, pixels) {
   return { w, h, label, pixels: mergedPixels.map((p) => Int32Array.from(p)) };
 }
 
+// The outline's own antialiasing fades gradually from black to white right next to a line — those
+// pale pixels are rightly excluded from any fillable region (so the line itself never gets
+// painted over), but since nothing ever colours them either, they'd sit there unchanged as a pale
+// gap between a saturated fill and the line's solid core. Painting 1px further than each region's
+// exact pixels — into that fringe — closes the gap; the true dark line still wins on top, since
+// refreshPaint() always multiplies the real artwork over the fill afterwards.
+function dilatePixelSet(idxArray, w, h) {
+  const grown = new Set(idxArray);
+  for (const idx of idxArray) {
+    const x = idx % w, y = (idx / w) | 0;
+    if (x > 0) grown.add(idx - 1);
+    if (x < w - 1) grown.add(idx + 1);
+    if (y > 0) grown.add(idx - w);
+    if (y < h - 1) grown.add(idx + w);
+  }
+  return Int32Array.from(grown);
+}
+
 function paintRegion(regionId, color) {
-  const pix = G.regionPixels[regionId];
+  const pix = G.paintPixels[regionId];
   if (!pix) return;
   const [r, gg, b] = hexToRgb(color);
   const data = G.paintData.data;
@@ -1007,7 +1029,7 @@ function refreshPaint() {
 // Eases a region from its current colour to a new one over a few frames, instead of a hard swap —
 // this is what makes a fill feel like paint flowing in rather than a flat colour-replace.
 function animateRegionFill(rid, toColor) {
-  const pix = G.regionPixels[rid];
+  const pix = G.paintPixels[rid];
   if (!pix) return;
   const thisGame = G; // closure guard: if the player leaves mid-animation, G is replaced/nulled
   const fromColor = G.regionColors.get(rid) || '#ffffff';
@@ -1387,6 +1409,7 @@ async function startColorGame(code, data, preloadedImg) {
     const img = preloadedImg || await loadImage(data.image);
     const regions = computeRegions(img);
     G.label = regions.label; G.regionPixels = regions.pixels; G.lineImg = img;
+    G.paintPixels = regions.pixels.map((p) => dilatePixelSet(p, W, H));
     G.paintData = new ImageData(new Uint8ClampedArray(W * H * 4).fill(255), W, H);
     for (const [id, color] of Object.entries(data.regions || {})) {
       G.regionColors.set(+id, color);
