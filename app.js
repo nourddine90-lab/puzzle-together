@@ -32,12 +32,6 @@ const COUNTS = [50, 100, 150, 200, 300, 500];
 const COLORS = ['#ff5c8a', '#4cc9f0', '#ffd166', '#06d6a0', '#b388ff', '#ff9f43'];
 const CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 const ROTS = [0, 90, 180, 270];
-const COLOR_PICS = [
-  { id: 'heart', label: 'Heart' },
-  { id: 'flower', label: 'Flower' },
-  { id: 'cat', label: 'Cat' },
-  { id: 'house', label: 'House' },
-];
 const PALETTE = [
   '#e63946', '#f3722c', '#f8961e', '#f9c74f', '#90be6d', '#43aa8b',
   '#4d96ff', '#277da1', '#5e60ce', '#9d4edd', '#b5179e', '#ff70a6',
@@ -191,21 +185,6 @@ function setHomeMode(m) {
 $('modePuzzle').onclick = () => setHomeMode('puzzle');
 $('modeColor').onclick = () => setHomeMode('color');
 
-function buildGallery() {
-  const box = $('gallery');
-  if (box.children.length) return;
-  for (const p of COLOR_PICS) {
-    const b = document.createElement('button');
-    const img = document.createElement('img');
-    img.src = `coloring/${p.id}.png`;
-    img.alt = p.label;
-    const span = document.createElement('span');
-    span.textContent = p.label;
-    b.append(img, span);
-    b.onclick = () => createColorRoom('fill', `coloring/${p.id}.png`);
-    box.append(b);
-  }
-}
 $('blankPage').onclick = () => createColorRoom('draw');
 
 $('tracePhotoFile').onchange = async (e) => {
@@ -285,13 +264,20 @@ function imageToDataUrl(img) {
 // near-white paper and near-black ink. If nearly everything is already extreme, skip edge
 // detection — running it on top of existing clean lines only adds noise and doubled outlines.
 function looksLikeLineArt(data) {
-  let extreme = 0, total = 0;
-  for (let p = 0; p < data.length; p += 4 * 5) { // sample every 5th pixel — plenty accurate, much faster
-    const lum = data[p] * 0.299 + data[p + 1] * 0.587 + data[p + 2] * 0.114;
-    if (lum > 232 || lum < 60) extreme++;
-    total++;
+  // Paper is measured, not assumed white: AI pages often sit on light-grey paper.
+  const lums = [];
+  let colourful = 0;
+  for (let p = 0; p < data.length; p += 4 * 5) {
+    const r = data[p], g = data[p + 1], b = data[p + 2];
+    lums.push(r * 0.299 + g * 0.587 + b * 0.114);
+    if (Math.max(r, g, b) - Math.min(r, g, b) > 40) colourful++;
   }
-  return extreme / total > 0.88;
+  if (colourful / lums.length > 0.05) return false;
+  const paper = Float32Array.from(lums).sort()[Math.floor(lums.length * 0.75)];
+  if (paper < 170) return false;
+  let extreme = 0;
+  for (const l of lums) if (l > paper - 30 || l < 90) extreme++;
+  return extreme / lums.length > 0.85;
 }
 
 // Turns a photo into black-outline/white-paper line art, entirely in the browser (no AI call, no
@@ -889,13 +875,17 @@ function computeRegions(imgEl) {
   ctx.drawImage(imgEl, 0, 0, w, h);
   const { data } = ctx.getImageData(0, 0, w, h);
   let ink = new Uint8Array(w * h);
+  const sample = [];
+  for (let p = 0; p < data.length; p += 4 * 7) sample.push(data[p] * 0.299 + data[p + 1] * 0.587 + data[p + 2] * 0.114);
+  const paper = Float32Array.from(sample).sort()[Math.floor(sample.length * 0.75)];
+  const inkBelow = Math.min(235, paper - 20); // grey paper must not count as line
   for (let p = 0, i = 0; p < data.length; p += 4, i++) {
     const lum = data[p] * 0.299 + data[p + 1] * 0.587 + data[p + 2] * 0.114;
     // Generously inclusive on purpose: this mask is only used to decide which side of a line a
     // colour belongs to (never shown — the real line art is drawn on top afterwards), so it's
     // fine to swallow the whole antialiased grey band around a curve into "wall" at the source,
     // rather than let it become its own sliver of paper that a fill can never actually reach.
-    ink[i] = lum < 235 || data[p + 3] < 128 ? 1 : 0; // dark/greyish (outline + its AA halo) or transparent = wall
+    ink[i] = lum < inkBelow || data[p + 3] < 128 ? 1 : 0; // dark/greyish (outline + its AA halo) or transparent = wall
   }
   // This mask only decides which side of a line a colour belongs to — it's never shown; the
   // actual line art is drawn on top afterwards. So it's safe to close gaps here: a stray hairline
@@ -1021,6 +1011,7 @@ function refreshPaint() {
   const ctx = G.compositeCtx;
   ctx.globalCompositeOperation = 'source-over';
   ctx.putImageData(G.paintData, 0, 0);
+  ctx.drawImage(G.brushCanvas, 0, 0); // free-brush paint sits under the line art too
   ctx.globalCompositeOperation = 'multiply';
   ctx.drawImage(G.lineImg, 0, 0, G.W, G.H);
   ctx.globalCompositeOperation = 'source-over';
@@ -1066,6 +1057,7 @@ function onRegion(id, color) {
 }
 
 function onFillTap() {
+  if (G.fillTool === 'brush') return;
   const pos = G.konvaImage.getRelativePointerPosition();
   let x = Math.round(pos.x), y = Math.round(pos.y);
   if (x < 0 || y < 0 || x >= G.W || y >= G.H) return;
@@ -1085,10 +1077,11 @@ function onFillTap() {
   }
   if (rid === -1) return;
   const color = G.drawColor;
+  const prev = G.regionColors.get(rid) || null;
   animateRegionFill(rid, color);
   rippleAt(pos.x, pos.y, color);
   playPop();
-  if (!G.myRegions.includes(rid)) G.myRegions.push(rid);
+  G.history.push({ kind: 'region', id: rid, prev });
   store.update(G.code, { ['regions/' + rid]: color }).catch((e) => toast('Sync error: ' + e.message, 3000));
 }
 
@@ -1102,8 +1095,20 @@ function applyBrushStyle(ctx, type, width) {
 }
 function resetBrushStyle(ctx) { ctx.filter = 'none'; ctx.globalAlpha = 1; }
 
+// In fill mode strokes go on their own layer (under the line art); the eraser cuts brush paint
+// away there instead of painting white over the tap-fills.
+function strokeCtx(type) {
+  if (G.mode !== 'fill') return G.compositeCtx;
+  G.brushCtx.globalCompositeOperation = type === 'erase' ? 'destination-out' : 'source-over';
+  return G.brushCtx;
+}
+function showStrokes() {
+  if (G.mode === 'fill') { G.brushCtx.globalCompositeOperation = 'source-over'; refreshPaint(); }
+  else G.layer.batchDraw();
+}
+
 function strokeSegment(x0, y0, x1, y1, color, width, type = 'marker') {
-  const ctx = G.compositeCtx;
+  const ctx = strokeCtx(type);
   ctx.strokeStyle = color;
   applyBrushStyle(ctx, type, width);
   ctx.beginPath(); ctx.moveTo(x0, y0); ctx.lineTo(x1, y1); ctx.stroke();
@@ -1114,7 +1119,7 @@ function strokeSegment(x0, y0, x1, y1, color, width, type = 'marker') {
   resetBrushStyle(ctx);
 }
 function drawDot(x, y, color, width, type = 'marker') {
-  const ctx = G.compositeCtx;
+  const ctx = strokeCtx(type);
   ctx.fillStyle = color;
   applyBrushStyle(ctx, type, width);
   ctx.beginPath(); ctx.arc(x, y, width / 2, 0, Math.PI * 2); ctx.fill();
@@ -1122,7 +1127,7 @@ function drawDot(x, y, color, width, type = 'marker') {
 }
 
 function currentDrawParams() {
-  if (G.tool === 'erase') return { color: '#ffffff', width: G.brushSize * 1.8, type: 'marker' };
+  if (G.tool === 'erase') return { color: '#ffffff', width: G.brushSize * 1.8, type: 'erase' };
   return { color: G.drawColor, width: G.brushSize, type: G.brushType };
 }
 
@@ -1133,8 +1138,8 @@ function beginStroke(x, y) {
   drawDot(x, y, color, width, type);
   G.remoteCursors.set(id, 1); // we already drew this locally — onStroke should pick up from here, not redraw it
   G.allStrokes.set(id, G.currentStroke);
-  G.myStrokes.push(id);
-  G.layer.batchDraw();
+  G.history.push({ kind: 'stroke', id });
+  showStrokes();
 }
 function continueStroke(x, y) {
   if (!G.currentStroke) return;
@@ -1144,7 +1149,7 @@ function continueStroke(x, y) {
   pts.push([Math.round(x), Math.round(y)]);
   strokeSegment(px, py, x, y, s.color, s.width, s.type);
   G.remoteCursors.set(s.id, pts.length);
-  G.layer.batchDraw();
+  showStrokes();
   const t = performance.now();
   if (t - G.lastSync > 70) { G.lastSync = t; syncStroke(); }
 }
@@ -1162,7 +1167,7 @@ function syncStroke() {
 // phone's own echoed write or the other player's, so there's no need to special-case "my own".
 // s === null means the stroke was undone/removed: drop it and redraw the page from what's left.
 function onStroke(id, s) {
-  if (!G || G.kind !== 'color' || G.mode !== 'draw') return;
+  if (!G || G.kind !== 'color') return;
   if (!s) { G.allStrokes.delete(id); redrawAll(); return; }
   if (!s.points?.length) return;
   const type = s.brush || 'marker';
@@ -1173,7 +1178,7 @@ function onStroke(id, s) {
   if (!have) drawDot(pts[0][0], pts[0][1], s.color, s.width, type);
   for (let i = Math.max(have, 1); i < pts.length; i++) strokeSegment(pts[i - 1][0], pts[i - 1][1], pts[i][0], pts[i][1], s.color, s.width, type);
   G.remoteCursors.set(id, pts.length);
-  G.layer.batchDraw();
+  showStrokes();
 }
 
 // The drawing canvas's blank state: plain white, or — when tracing over a photo — white with
@@ -1193,7 +1198,8 @@ function paintBase() {
 // Full repaint from everything currently known (used after an undo, since a single stroke can't
 // be "unpainted" from a flat canvas — only replayed from scratch without it).
 function redrawAll() {
-  paintBase();
+  if (G.mode === 'fill') G.brushCtx.clearRect(0, 0, G.W, G.H);
+  else paintBase();
   G.remoteCursors.clear();
   for (const [id, s] of G.allStrokes) {
     if (!s?.points?.length) continue;
@@ -1201,23 +1207,41 @@ function redrawAll() {
     for (let i = 1; i < s.points.length; i++) strokeSegment(s.points[i - 1][0], s.points[i - 1][1], s.points[i][0], s.points[i][1], s.color, s.width, s.type);
     G.remoteCursors.set(id, s.points.length);
   }
-  G.layer.batchDraw();
+  showStrokes();
 }
 
 function wireDrawing(stage) {
   const within1 = (e) => !(e.evt.touches && e.evt.touches.length > 1);
+  const brushOn = () => G.mode === 'draw' || G.fillTool === 'brush';
+  // Brush-size ring: white with a dark edge so it reads on any colour. Lives in image coordinates,
+  // so it scales with zoom exactly like the paint does.
+  const ring = new Konva.Circle({ stroke: '#fff', strokeWidth: 1.5, shadowColor: '#000', shadowBlur: 2, shadowOpacity: 0.9, listening: false, visible: false });
+  G.fxLayer.add(ring);
+  const moveRing = (p) => {
+    if (!brushOn()) { ring.visible(false); G.fxLayer.batchDraw(); return; }
+    const s = G.stage.scaleX();
+    ring.setAttrs({ x: p.x, y: p.y, radius: currentDrawParams().width / 2, strokeWidth: 1.5 / s, visible: true });
+    G.fxLayer.batchDraw();
+  };
+  const hideRing = () => { ring.visible(false); G.fxLayer.batchDraw(); };
   stage.on('mousedown touchstart', (e) => {
-    if (!within1(e)) return;
+    if (!within1(e)) { hideRing(); return; }
+    if (!brushOn()) return;
     const p = G.konvaImage.getRelativePointerPosition();
     if (p.x < 0 || p.y < 0 || p.x > G.W || p.y > G.H) return;
     G.drawing = true;
+    moveRing(p);
     beginStroke(p.x, p.y);
   });
   stage.on('mousemove touchmove', (e) => {
-    if (!G.drawing || !within1(e)) return;
+    if (!within1(e)) { hideRing(); return; }
     const p = G.konvaImage.getRelativePointerPosition();
+    if (e.type === 'mousemove' || G.drawing) moveRing(p);
+    if (!G.drawing) return;
     continueStroke(Math.max(0, Math.min(G.W, p.x)), Math.max(0, Math.min(G.H, p.y)));
   });
+  stage.on('touchend', hideRing);
+  stage.on('mouseleave', hideRing);
   stage.on('mouseup touchend mouseleave', () => { if (G.drawing) { G.drawing = false; endStroke(); } });
 }
 
@@ -1257,81 +1281,114 @@ function hslToHex(h, s, l) {
   const toHex = (x) => Math.round(x * 255).toString(16).padStart(2, '0');
   return '#' + toHex(r) + toHex(g) + toHex(b);
 }
-// 7 lightness steps of the tapped colour's own hue/saturation — tap a base colour, then
-// fine-tune to the exact shade, the way Procreate Pocket / Pigment let you refine a pick.
-function shadesOf(hex, n = 7) {
-  const { h, s } = hexToHsl(hex);
-  const out = [];
-  for (let i = 0; i < n; i++) out.push(hslToHex(h, s, 8 + (84 * i) / (n - 1)));
-  return out;
-}
 function loadRecents() { return readJSON(RECENTS_KEY, []); }
 function pushRecent(hex) {
   const r = [hex, ...loadRecents().filter((c) => c.toLowerCase() !== hex.toLowerCase())].slice(0, 6);
   writeJSON(RECENTS_KEY, r);
 }
 
-function makeSwatch(hex, extraClass) {
+// ---- colour panel: hue ring + shade slider + swatch grid (modelled on Sketchbook-style pickers) ----
+const PICK = { h: 0, s: 80, l: 55 };
+function makeSwatch(hex) {
   const b = document.createElement('button');
   b.dataset.hex = hex;
   b.style.background = hex;
-  if (hex.toLowerCase() === '#ffffff') b.style.boxShadow = 'inset 0 0 0 1px rgba(255,255,255,.4)';
-  if (extraClass) b.className = extraClass;
-  b.onclick = () => selectColor(hex);
+  b.onclick = () => { setPick(hex); selectColor(hex); };
   return b;
 }
-function renderSwatchRow() {
-  const row = $('swatchRow');
-  row.innerHTML = '';
-  for (const c of PALETTE) row.append(makeSwatch(c));
-  const plus = document.createElement('button');
-  plus.className = 'swatchMore';
-  plus.textContent = '+';
-  plus.setAttribute('aria-label', 'Custom color — pick any shade');
-  plus.onclick = () => $('customColorInput').click();
-  row.append(plus);
-  for (const c of loadRecents()) row.append(makeSwatch(c, 'recent'));
-  markSelected();
-}
-function renderShadeRow(hex) {
-  const row = $('shadeRow');
-  row.innerHTML = '';
-  for (const c of shadesOf(hex)) row.append(makeSwatch(c));
+function renderSwatches() {
+  $('swatchGrid').replaceChildren(...PALETTE.map(makeSwatch));
+  const rec = loadRecents();
+  $('recentGrid').replaceChildren(...rec.map(makeSwatch));
+  $('recentLabel').hidden = !rec.length;
   markSelected();
 }
 function markSelected() {
-  for (const row of [$('swatchRow'), $('shadeRow')]) {
-    for (const x of row.children) x.classList.toggle('on', x.dataset.hex?.toLowerCase() === G.drawColor.toLowerCase());
-  }
+  for (const x of document.querySelectorAll('#colorSheet [data-hex]')) x.classList.toggle('on', x.dataset.hex.toLowerCase() === G.drawColor.toLowerCase());
 }
+function setPick(hex) {
+  const { h, s, l } = hexToHsl(hex);
+  Object.assign(PICK, { h, s, l });
+  drawPick();
+}
+function drawPick() {
+  const a = (PICK.h - 90) * Math.PI / 180;
+  const k = $('ringKnob');
+  k.style.left = 50 + 41 * Math.cos(a) + '%';
+  k.style.top = 50 + 41 * Math.sin(a) + '%';
+  k.style.background = `hsl(${PICK.h} ${Math.max(PICK.s, 60)}% 55%)`;
+  $('lightInput').value = PICK.l;
+  $('lightInput').style.background = `linear-gradient(90deg, hsl(${PICK.h} ${PICK.s}% 8%), hsl(${PICK.h} ${PICK.s}% 50%), hsl(${PICK.h} ${PICK.s}% 92%))`;
+  $('colorPreview').style.background = G?.drawColor || '#fff';
+}
+function pickFromRing(e) {
+  const r = $('hueRing').getBoundingClientRect();
+  const dx = e.clientX - (r.left + r.width / 2), dy = e.clientY - (r.top + r.height / 2);
+  PICK.h = (Math.atan2(dx, -dy) * 180 / Math.PI + 360) % 360;
+  if (PICK.s < 35) PICK.s = 85;
+  if (PICK.l < 15 || PICK.l > 85) PICK.l = 55;
+  selectColor(hslToHex(PICK.h, PICK.s, PICK.l));
+  drawPick();
+}
+$('hueRing').onpointerdown = (e) => { $('hueRing').setPointerCapture(e.pointerId); pickFromRing(e); };
+$('hueRing').onpointermove = (e) => { if (e.buttons) pickFromRing(e); };
+$('lightInput').oninput = (e) => { PICK.l = +e.target.value; selectColor(hslToHex(PICK.h, PICK.s, PICK.l)); drawPick(); };
+
 function selectColor(hex) {
   G.drawColor = hex;
-  G.tool = 'draw';
-  $('eraser').classList.remove('on');
-  renderShadeRow(hex);
+  if (G.tool === 'erase') setTool(G.mode === 'fill' ? 'fill' : 'brush');
+  $('colorChip').style.background = hex;
   markSelected();
   updateSizeDot();
+  $('colorPreview').style.background = hex;
 }
-$('customColorInput').oninput = (e) => selectColor(e.target.value); // live preview while dragging
-$('customColorInput').onchange = (e) => { pushRecent(e.target.value); renderSwatchRow(); selectColor(e.target.value); };
-
 function buildPalette() {
-  renderSwatchRow();
-  renderShadeRow(G.drawColor);
+  renderSwatches();
+  setPick(G.drawColor);
+  $('colorChip').style.background = G.drawColor;
 }
+
+// ---- panels + tools ----
+const PANELS = ['colorSheet', 'brushPop'];
+function togglePanel(id) { for (const p of PANELS) $(p).hidden = p !== id || !$(p).hidden; }
+function closePanels() {
+  if (!$('colorSheet').hidden) { pushRecent(G.drawColor); renderSwatches(); }
+  for (const p of PANELS) $(p).hidden = true;
+}
+$('colorBtn').onclick = () => {
+  if ($('colorSheet').hidden) { setPick(G.drawColor); togglePanel('colorSheet'); } else closePanels();
+};
+$('closeColor').onclick = closePanels;
+
+// 'fill' = tap a shape; 'brush' = paint freely (under the lines in fill mode); 'erase'.
+// Painting tools stop one-finger panning; pinch still zooms.
+function setTool(t) {
+  G.fillTool = t === 'fill' ? 'fill' : 'brush';
+  G.tool = t === 'erase' ? 'erase' : 'draw';
+  $('toolFill').classList.toggle('on', t === 'fill');
+  $('toolBrush').classList.toggle('on', t === 'brush');
+  $('eraser').classList.toggle('on', t === 'erase');
+  $('brushTypeRow').hidden = t === 'erase';
+  $('brushPopTitle').textContent = t === 'erase' ? 'Eraser size' : 'Brush size';
+  if (G.mode === 'fill') G.stage.draggable(t === 'fill');
+  updateSizeDot();
+}
+const activeTool = () => (G.tool === 'erase' ? 'erase' : G.fillTool === 'fill' && G.mode === 'fill' ? 'fill' : 'brush');
+$('toolFill').onclick = () => { closePanels(); setTool('fill'); };
+$('toolBrush').onclick = () => { if (activeTool() === 'brush') togglePanel('brushPop'); else { closePanels(); setTool('brush'); } };
+$('eraser').onclick = () => { if (activeTool() === 'erase') togglePanel('brushPop'); else { closePanels(); setTool('erase'); } };
 
 const BRUSH_BTN = { marker: 'brushMarker', crayon: 'brushCrayon', watercolor: 'brushWater' };
 function setBrushType(type) {
   G.brushType = type;
-  G.tool = 'draw';
   for (const t in BRUSH_BTN) $(BRUSH_BTN[t]).classList.toggle('on', t === type);
-  $('eraser').classList.remove('on');
   updateSizeDot();
 }
 function updateSizeDot() {
   const d = $('sizeDot');
-  const s = Math.max(6, Math.min(40, G.brushSize));
+  const s = Math.max(4, Math.min(44, G.brushSize * (G.tool === 'erase' ? 1.1 : 1)));
   d.style.width = s + 'px'; d.style.height = s + 'px';
+  d.classList.toggle('erase', G.tool === 'erase');
   d.style.background = G.tool === 'erase' ? '#fff' : G.drawColor;
   d.style.opacity = G.brushType === 'watercolor' && G.tool !== 'erase' ? 0.5 : 1;
 }
@@ -1339,32 +1396,25 @@ $('brushMarker').onclick = () => setBrushType('marker');
 $('brushCrayon').onclick = () => setBrushType('crayon');
 $('brushWater').onclick = () => setBrushType('watercolor');
 $('brushSizeInput').oninput = (e) => { G.brushSize = +e.target.value; updateSizeDot(); };
-$('eraser').onclick = () => {
-  G.tool = G.tool === 'erase' ? 'draw' : 'erase';
-  $('eraser').classList.toggle('on', G.tool === 'erase');
-  updateSizeDot();
-};
 $('undoBtn').onclick = () => {
   if (!G || G.kind !== 'color') return;
-  if (G.mode === 'fill') {
-    const rid = G.myRegions.pop();
-    if (rid === undefined) return;
-    animateRegionFill(rid, null);
-    store.update(G.code, { ['regions/' + rid]: null }).catch(() => {});
+  const last = G.history.pop();
+  if (!last) return;
+  if (last.kind === 'region') {
+    animateRegionFill(last.id, last.prev);
+    store.update(G.code, { ['regions/' + last.id]: last.prev }).catch(() => {});
   } else {
-    const id = G.myStrokes.pop();
-    if (!id) return;
-    G.allStrokes.delete(id);
+    G.allStrokes.delete(last.id);
     redrawAll();
-    store.update(G.code, { ['strokes/' + id]: null }).catch(() => {});
+    store.update(G.code, { ['strokes/' + last.id]: null }).catch(() => {});
   }
 };
 $('clearPage').onclick = () => {
   if (!G || G.kind !== 'color') return;
   G.clearSeq = (G.clearSeq || 0) + 1;
   wipeCanvas();
-  const patch = { ['meta/clearSeq']: G.clearSeq };
-  patch[G.mode === 'fill' ? 'regions' : 'strokes'] = null;
+  const patch = { ['meta/clearSeq']: G.clearSeq, strokes: null };
+  if (G.mode === 'fill') patch.regions = null;
   store.update(G.code, patch).catch((e) => toast('Sync error: ' + e.message, 3000));
 };
 function wipeCanvas() {
@@ -1372,9 +1422,8 @@ function wipeCanvas() {
   G.regionColors.clear();
   G.remoteCursors.clear();
   G.allStrokes.clear();
-  G.myStrokes = [];
-  G.myRegions = [];
-  if (G.mode === 'fill' && G.paintData) { G.paintData.data.fill(255); refreshPaint(); }
+  G.history = [];
+  if (G.mode === 'fill' && G.paintData) { G.brushCtx.clearRect(0, 0, G.W, G.H); G.paintData.data.fill(255); refreshPaint(); }
   G.layer.batchDraw();
 }
 function onClear(seq) {
@@ -1387,7 +1436,7 @@ async function startColorGame(code, data, preloadedImg) {
   G = {
     kind: 'color', mode, code, W, H, clearSeq: data.meta.clearSeq || 0,
     regionColors: new Map(), remoteCursors: new Map(), allStrokes: new Map(),
-    myStrokes: [], myRegions: [], players: {}, holds: {},
+    history: [], fillTool: 'fill', players: {}, holds: {},
     drawColor: PALETTE[0], brushType: 'marker', tool: 'draw', brushSize: 12,
     currentStroke: null, drawing: false, lastSync: 0,
   };
@@ -1413,32 +1462,36 @@ async function startColorGame(code, data, preloadedImg) {
     const tiny = regions.pixels.map((p) => p.length < 30);
     G.paintPixels = regions.pixels.map((p) => dilatePixelSet(p, W, H, regions.label, tiny));
     G.paintData = new ImageData(new Uint8ClampedArray(W * H * 4).fill(255), W, H);
+    G.brushCanvas = document.createElement('canvas');
+    G.brushCanvas.width = W; G.brushCanvas.height = H;
+    G.brushCtx = G.brushCanvas.getContext('2d');
     for (const [id, color] of Object.entries(data.regions || {})) {
       G.regionColors.set(+id, color);
       paintRegion(+id, color);
     }
-    refreshPaint();
-  } else {
-    for (const [id, s] of Object.entries(data.strokes || {})) {
-      if (!s?.points?.length) continue;
-      const type = s.brush || 'marker';
-      drawDot(s.points[0][0], s.points[0][1], s.color, s.width, type);
-      for (let i = 1; i < s.points.length; i++) strokeSegment(s.points[i - 1][0], s.points[i - 1][1], s.points[i][0], s.points[i][1], s.color, s.width, type);
-      G.remoteCursors.set(id, s.points.length);
-      G.allStrokes.set(id, { color: s.color, width: s.width, type, points: s.points });
-    }
   }
+  for (const [id, s] of Object.entries(data.strokes || {})) {
+    if (!s?.points?.length) continue;
+    const type = s.brush || 'marker';
+    drawDot(s.points[0][0], s.points[0][1], s.color, s.width, type);
+    for (let i = 1; i < s.points.length; i++) strokeSegment(s.points[i - 1][0], s.points[i - 1][1], s.points[i][0], s.points[i][1], s.color, s.width, type);
+    G.remoteCursors.set(id, s.points.length);
+    G.allStrokes.set(id, { color: s.color, width: s.width, type, points: s.points });
+  }
+  if (mode === 'fill') { G.brushCtx.globalCompositeOperation = 'source-over'; refreshPaint(); }
 
   G.konvaImage = new Konva.Image({ image: canvas, width: W, height: H });
   G.layer.add(G.konvaImage);
   if (mode === 'fill') G.konvaImage.on('click tap', onFillTap);
-  else wireDrawing(stage);
+  wireDrawing(stage);
 
   $('ghost').hidden = true;
   $('palette').hidden = false;
-  $('brushTypeRow').style.display = mode === 'draw' ? 'flex' : 'none';
-  $('sizeRow').style.display = mode === 'draw' ? 'flex' : 'none';
-  if (mode === 'draw') setBrushType('marker');
+  $('toolFill').hidden = mode !== 'fill';
+  closePanels();
+  setBrushType('marker');
+  setTool(mode === 'fill' ? 'fill' : 'brush');
+  stage.on('mousedown touchstart', () => { if (PANELS.some((p) => !$(p).hidden)) closePanels(); });
   $('brushSizeInput').value = G.brushSize;
   updateSizeDot();
   buildPalette();
@@ -1469,7 +1522,7 @@ $('share').onclick = async () => {
   const url = location.origin + location.pathname + '?room=' + G.code;
   const text = G.kind === 'color' ? `Come color together 🎨 Code: ${G.code}` : `Come play our puzzle 🧩 Code: ${G.code}`;
   try {
-    if (navigator.share) await navigator.share({ title: 'Together', text, url });
+    if (navigator.share) await navigator.share({ title: 'Hajour Together', text, url });
     else { await navigator.clipboard.writeText(`${text}\n${url}`); toast('Invite link copied'); }
   } catch {}
 };
@@ -1490,7 +1543,6 @@ async function boot() {
   }
   renderCounts();
   renderList();
-  buildGallery();
   if (!me) await askName();
   $('who').textContent = `Hi ${me.name} 💕  (tap to change)`;
   const code = new URLSearchParams(location.search).get('room');

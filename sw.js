@@ -1,9 +1,8 @@
 // Network first, cache as fallback, so updates show up right away but the app still opens offline.
-const CACHE = 'pt-v4';
+const CACHE = 'pt-v5';
 const SHELL = [
   './', 'index.html', 'style.css', 'app.js', 'store.js', 'sound.js', 'firebase-config.js',
   'manifest.webmanifest', 'konva.min.js', 'icon-192.png', 'icon-512.png',
-  'coloring/heart.png', 'coloring/flower.png', 'coloring/cat.png', 'coloring/house.png',
 ];
 
 self.addEventListener('install', (e) => {
