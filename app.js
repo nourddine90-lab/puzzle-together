@@ -1,5 +1,8 @@
+import { GUESS_WORDS } from './words.js';
+import { QUIZ, QUIZ_CATS } from './quiz.js';
+import { TOD, TOD_CATS, todId } from './tod.js';
 import { createStore } from './store.js';
-import { playSnap, playPop, playChime, unlockAudio } from './sound.js';
+import { playSnap, playPop, playChime, playSfx, unlockAudio } from './sound.js';
 
 /*
  * Data model (same online and offline). Two kinds of room share one "rooms/<CODE>" record:
@@ -117,7 +120,7 @@ function askName() {
       me = { name, color };
       writeJSON('pt-me', me);
       $('nameDlg').hidden = true;
-      $('who').textContent = `Hi ${me.name} 💕  (tap to change)`;
+      $('who').textContent = `أهلًا ${me.name} 💕  (اضغط للتغيير)`;
       done();
     };
   });
@@ -148,7 +151,7 @@ function renderList() {
   const ul = $('list');
   ul.innerHTML = '';
   const list = readJSON('pt-list', []);
-  if (!list.length) { ul.innerHTML = '<li class="empty">No rooms yet</li>'; return; }
+  if (!list.length) { ul.innerHTML = '<li class="empty">لا توجد غرف بعد</li>'; return; }
   for (const e of list) {
     const li = document.createElement('li');
     let thumb;
@@ -158,7 +161,7 @@ function renderList() {
     const b = document.createElement('b');
     b.textContent = e.code;
     const small = document.createElement('small');
-    small.textContent = e.n ? `${e.n} pieces · ${e.pct ?? 0}% · ${new Date(e.t).toLocaleDateString()}` : new Date(e.t).toLocaleDateString();
+    small.textContent = e.n ? `${e.n} قطعة · ${e.pct ?? 0}% · ${new Date(e.t).toLocaleDateString('en-GB')}` : new Date(e.t).toLocaleDateString('en-GB');
     div.append(b, small);
     const x = document.createElement('button');
     x.className = 'x';
@@ -176,14 +179,45 @@ function renderList() {
 }
 
 // ---------- home: Puzzle / Color mode tabs ----------
+// m = null shows the game grid; otherwise that game's setup card.
 function setHomeMode(m) {
-  $('modePuzzle').classList.toggle('on', m === 'puzzle');
-  $('modeColor').classList.toggle('on', m === 'color');
+  $('gameGrid').hidden = !!m;
+  $('gamesTitle').hidden = !!m;
+  $('backToGames').hidden = !m;
   $('puzzleCreate').hidden = m !== 'puzzle';
   $('colorCreate').hidden = m !== 'color';
+  $('guessCreate').hidden = m !== 'guess';
+  scrollTo({ top: 0, behavior: 'smooth' });
 }
-$('modePuzzle').onclick = () => setHomeMode('puzzle');
-$('modeColor').onclick = () => setHomeMode('color');
+for (const card of document.querySelectorAll('.gameCard')) {
+  card.onclick = () => (card.dataset.game === 'quiz' ? newQuizRoom('quiz')
+    : card.dataset.game === 'tod' ? newQuizRoom('tod') : setHomeMode(card.dataset.game));
+}
+async function newQuizRoom(kind) {
+  toast('جارٍ تجهيز اللعبة…', 8000);
+  try {
+    const code = newCode();
+    await store.createRoom(code, { meta: { kind, created: Date.now(), by: me.name } });
+    remember(code, { icon: kind === 'tod' ? '🍾' : '💞' });
+    await openRoom(code);
+  } catch (err) {
+    console.error(err);
+    toast('تعذّر البدء: ' + err.message, 4000);
+  }
+}
+$('backToGames').onclick = () => setHomeMode(null);
+$('newGuessGame').onclick = async () => {
+  toast('جارٍ تجهيز اللعبة…', 8000);
+  try {
+    const code = newCode();
+    await store.createRoom(code, { meta: { kind: 'color', mode: 'draw', game: 'guess', w: 1000, h: 1000, created: Date.now(), by: me.name, clearSeq: 0 } });
+    remember(code, { icon: '🤔' });
+    await openRoom(code);
+  } catch (err) {
+    console.error(err);
+    toast('تعذّر البدء: ' + err.message, 4000);
+  }
+};
 
 $('blankPage').onclick = () => createColorRoom('draw');
 
@@ -191,7 +225,7 @@ $('tracePhotoFile').onchange = async (e) => {
   const f = e.target.files[0];
   if (!f) return;
   const label = $('tracePhotoLabel');
-  label.textContent = '🖼️ Loading…';
+  label.textContent = '🖼️ جارٍ التحميل…';
   const url = URL.createObjectURL(f);
   try {
     const raw = await loadImage(url);
@@ -199,10 +233,10 @@ $('tracePhotoFile').onchange = async (e) => {
     await createColorRoom('draw', null, backdrop);
   } catch (err) {
     console.error(err);
-    toast('Could not read that photo', 3000);
+    toast('تعذّرت قراءة الصورة', 3000);
   } finally {
     URL.revokeObjectURL(url);
-    label.textContent = '🖼️ Or trace freely over a photo';
+    label.textContent = '🖼️ أو ارسم بحرّية فوق صورة';
     e.target.value = '';
   }
 };
@@ -211,7 +245,7 @@ $('photoFile').onchange = async (e) => {
   const f = e.target.files[0];
   if (!f) return;
   const label = $('photoFileLabel');
-  label.textContent = '🖍️ Turning it into a coloring page…';
+  label.textContent = '🖍️ جارٍ تحويلها إلى صفحة تلوين…';
   const url = URL.createObjectURL(f);
   try {
     const raw = await loadImage(url);
@@ -219,10 +253,10 @@ $('photoFile').onchange = async (e) => {
     await createColorRoom('fill', lineArt);
   } catch (err) {
     console.error(err);
-    toast('Could not read that photo', 3000);
+    toast('تعذّرت قراءة الصورة', 3000);
   } finally {
     URL.revokeObjectURL(url);
-    label.textContent = '📷 Upload your own photo';
+    label.textContent = '📷 ارفع صورة للتلوين';
     e.target.value = '';
   }
 };
@@ -246,10 +280,10 @@ async function createColorRoom(mode, imageSrc, backdrop) {
     if (mode === 'fill') remember(code, { thumb: downscale(await loadImage(image), 200, 0.7), icon: '🎨' });
     else remember(code, backdrop ? { thumb: downscale(await loadImage(backdrop), 200, 0.7), icon: '🖼️' } : { icon: '✏️' });
     await openRoom(code);
-    if (mode === 'fill') toast('🖌️ Tap a shape to fill it with the selected color', 3500);
+    if (mode === 'fill') toast('🖌️ اضغط على أيّ شكل لتلوينه باللون المختار', 3500);
   } catch (err) {
     console.error(err);
-    toast('Could not start: ' + err.message, 4000);
+    toast('تعذّر البدء: ' + err.message, 4000);
   }
 }
 
@@ -373,14 +407,14 @@ $('file').onchange = async (e) => {
     pick.thumb = downscale(raw, 200, 0.7);
     pick.img = await loadImage(pick.dataUrl);
   } catch {
-    toast('Could not read that image', 3000);
+    toast('تعذّرت قراءة الصورة', 3000);
     return;
   } finally {
     URL.revokeObjectURL(url);
   }
   $('preview').src = pick.thumb;
   $('preview').hidden = false;
-  $('fileLabel').textContent = '📷 Change photo';
+  $('fileLabel').textContent = '📷 غيّر الصورة';
   $('create').disabled = false;
   renderCounts();
 };
@@ -409,7 +443,7 @@ $('create').onclick = async () => {
       }
     }
     const code = newCode();
-    toast('Creating puzzle…', 10000);
+    toast('جارٍ إنشاء الأحجية…', 10000);
     await store.createRoom(code, {
       meta: { kind: 'puzzle', cols, rows, w: W, h: H, seed, created: Date.now(), by: me.name },
       image: pick.dataUrl,
@@ -418,10 +452,10 @@ $('create').onclick = async () => {
     });
     remember(code, { thumb: pick.thumb, n: cols * rows, pct: 0 });
     await openRoom(code);
-    toast('🔄 Pieces start crooked — double-tap one to turn it upright', 4000);
+    toast('🔄 القطع مائلة في البداية — اضغط مرّتين على القطعة لتعديلها', 4000);
   } catch (err) {
     console.error(err);
-    toast('Could not create: ' + err.message, 4000);
+    toast('تعذّر الإنشاء: ' + err.message, 4000);
   }
   $('create').disabled = false;
 };
@@ -429,20 +463,20 @@ $('create').onclick = async () => {
 $('join').onclick = () => {
   const c = $('joinCode').value.toUpperCase().replace(/[^A-Z0-9]/g, '');
   if (c.length === 6) openRoom(c);
-  else toast('Codes have 6 characters');
+  else toast('الرمز من 6 أحرف');
 };
 
 // ---------- open a room ----------
 async function openRoom(code) {
-  toast('Opening room…', 15000);
+  toast('جارٍ فتح الغرفة…', 15000);
   let data;
   try {
     data = await store.loadRoom(code);
   } catch (e) {
-    toast('Error: ' + e.message, 4000);
+    toast('خطأ: ' + e.message, 4000);
     return;
   }
-  if (!data) { toast('No room with code ' + code, 3000); return; }
+  if (!data) { toast('لا توجد غرفة بالرمز ' + code, 3000); return; }
   const kind = data.meta.kind || 'puzzle';
 
   leaveGame();
@@ -451,13 +485,19 @@ async function openRoom(code) {
   history.replaceState(null, '', '?room=' + code);
   $('roomCode').textContent = code;
 
-  if (kind === 'color') {
+  if (kind === 'tod') {
+    remember(code, { icon: '🍾' });
+    startTodGame(code);
+  } else if (kind === 'quiz') {
+    remember(code, { icon: '💞' });
+    startQuizGame(code, data);
+  } else if (kind === 'color') {
     if (data.meta.mode === 'fill') {
       const img = await loadImage(data.image);
       remember(code, { thumb: downscale(img, 200, 0.7), icon: '🎨' });
       await startColorGame(code, data, img);
     } else {
-      remember(code, { icon: '✏️' });
+      remember(code, { icon: data.meta.game === 'guess' ? '🤔' : '✏️' });
       await startColorGame(code, data);
     }
   } else {
@@ -472,8 +512,15 @@ async function openRoom(code) {
 function leaveGame() {
   if (!G) return;
   G.unsub?.();
+  clearInterval(G.guessTimer);
+  $('guessUI').hidden = true;
   store.leave(G.code);
-  G.stage.destroy();
+  G.stage?.destroy();
+  $('quizUI').hidden = true;
+  $('todUI').hidden = true;
+  $('puzzleBar').hidden = true;
+  $('game').classList.remove('puzzleRoom');
+  G.timers?.forEach(clearTimeout);
   G = null;
 }
 
@@ -521,6 +568,7 @@ function piecePath(ctx, r, c) {
 function startGame(code, data, img) {
   const { cols, rows, w: W, h: H, seed } = data.meta;
   const pw = W / cols, ph = H / rows, S = Math.min(pw, ph), n = cols * rows;
+  $('game').classList.add('puzzleRoom');
   G = {
     kind: 'puzzle', code, cols, rows, W, H, pw, ph, S, n, img,
     edges: makeEdges(rows, cols, seed),
@@ -532,6 +580,10 @@ function startGame(code, data, img) {
   const stage = new Konva.Stage({ container: 'stage', width: innerWidth, height: innerHeight, draggable: true });
   G.stage = stage;
   const bg = new Konva.Layer({ listening: false });
+  // The room picture lives inside the canvas, so it zooms and pans with the pieces.
+  G.room = new Konva.Image({ opacity: 0 });
+  bg.add(G.room);
+  loadImage('games/table.jpg').then((roomImg) => { if (G?.room) { G.room.image(roomImg); placeRoom(); } }).catch(() => {});
   bg.add(new Konva.Rect({
     x: 0, y: 0, width: W, height: H,
     fill: 'rgba(255,255,255,0.05)', stroke: 'rgba(255,255,255,0.35)',
@@ -579,6 +631,7 @@ function startGame(code, data, img) {
   updateProgress();
   fit();
   setupGestures(stage);
+  setupPanByDoubleTap(stage);
 
   G.unsub = store.subscribe(code, {
     onGroup: (id, v) => onGroup(id, v),
@@ -673,7 +726,7 @@ function commit(patch) {
     if (kind === 'groups') onGroup(id, v);
     else onPiece(+id, v, false);
   }
-  store.update(G.code, patch).catch((e) => toast('Sync error: ' + e.message, 3000));
+  store.update(G.code, patch).catch((e) => toast('خطأ في المزامنة: ' + e.message, 3000));
 }
 
 function trySnap(gid) {
@@ -719,7 +772,12 @@ function trySnap(gid) {
   }
   n.position(posOf(n));
   commit({ ['groups/' + cur]: { ...posOf(n), rot: g.rot || 0 } });
-  if (snapped) playSnap();
+  if (snapped) {
+    playSnap();
+    const p = G.stage.getPointerPosition() || { x: innerWidth / 2, y: innerHeight / 2 };
+    burstAt(p.x, p.y, undefined, [['✨', '💖', '🧩', '⭐'][Math.floor(Math.random() * 4)]]);
+    updateProgress();
+  }
   return cur;
 }
 
@@ -752,6 +810,7 @@ function onPiece(i, gid, remote) {
     nodeOf(gid).moveToTop();
     clearTimeout(softTimer);
     softTimer = setTimeout(() => playSnap(true), 40);
+    burstAt(...nodeCenter(nodeOf(gid)), ['#5ba8ff', '#a66bff', '#ffd166'], ['💫'], 10);
     updateProgress();
   }
 }
@@ -770,8 +829,11 @@ function onPlayers(p) {
     s.textContent = (pl.name || '?')[0].toUpperCase();
     s.title = pl.name;
     box.append(s);
-    if (uid !== store.uid && !before[uid]) toast(`${pl.name} joined 💕`);
+    if (uid !== store.uid && !before[uid]) toast(`${pl.name} انضمّ 💕`);
   }
+  if (G.guessGame) renderGuess();
+  if (G.kind === 'quiz') renderQuiz();
+  if (G.kind === 'tod') renderTod();
 }
 
 function onHolds(h) {
@@ -790,11 +852,23 @@ function updateProgress() {
     if (!G) return;
     const k = liveGroups();
     const pct = Math.round(((G.n - k) / (G.n - 1)) * 100);
-    $('progress').textContent = `${pct}% · ${G.n} pieces${store.online ? '' : ' · offline'}`;
+    $('progress').textContent = `${pct}% · ${G.n} قطعة${store.online ? '' : ' · بلا اتصال'}`;
     remember(G.code, { pct });
+    $('puzzleBar').hidden = false;
+    $('puzzleFill').style.width = pct + '%';
+    const step = [75, 50, 25].find((m) => pct >= m) || 0;
+    if (G.lastStep !== undefined && step > G.lastStep && k > 1) {
+      toast({ 25: 'ربع الطريق! كمّلو 💪', 50: 'النصف! برافو 🎉', 75: 'بقا غير شوية! 🔥' }[step], 2200);
+      playSfx('cheer', 0.5);
+      burstHearts();
+    }
+    G.lastStep = step;
     if (k === 1 && !G.done) {
       G.done = true;
       playChime();
+      playSfx('cheer');
+      confetti();
+      burstHearts();
       fit();
       $('win').hidden = false;
     }
@@ -811,14 +885,23 @@ function zoomAt(f, cx = innerWidth / 2, cy = innerHeight / 2) {
 }
 
 function fit() {
-  const top = 64, pad = 12;
+  const top = G.guessGame ? 150 : 64, bottom = G.guessGame ? 100 : 0, pad = 12;
   if (G.kind === 'color') {
-    const vw = innerWidth - pad * 2, vh = innerHeight - top - pad * 2;
+    const vw = innerWidth - pad * 2, vh = innerHeight - top - bottom - pad * 2;
     const s = Math.min(vw / G.W, vh / G.H);
     G.stage.scale({ x: s, y: s });
     G.stage.position({ x: pad + (vw - G.W * s) / 2, y: top + pad + (vh - G.H * s) / 2 });
     return;
   }
+  const [x0, y0, x1, y1] = puzzleBounds();
+  const vw = innerWidth - pad * 2, vh = innerHeight - top - pad * 2;
+  const s = Math.min(vw / (x1 - x0), vh / (y1 - y0));
+  G.stage.scale({ x: s, y: s });
+  G.stage.position({ x: pad + (vw - (x1 - x0) * s) / 2 - x0 * s, y: top + pad + (vh - (y1 - y0) * s) / 2 - y0 * s });
+}
+
+// Board plus every loose piece, in board coordinates.
+function puzzleBounds() {
   let x0 = 0, y0 = 0, x1 = G.W, y1 = G.H;
   for (let i = 0; i < G.n; i++) {
     const gid = G.pieceGroup[i];
@@ -830,10 +913,49 @@ function fit() {
     x0 = Math.min(x0, cx - hw); y0 = Math.min(y0, cy - hh);
     x1 = Math.max(x1, cx + hw); y1 = Math.max(y1, cy + hh);
   }
-  const vw = innerWidth - pad * 2, vh = innerHeight - top - pad * 2;
-  const s = Math.min(vw / (x1 - x0), vh / (y1 - y0));
-  G.stage.scale({ x: s, y: s });
-  G.stage.position({ x: pad + (vw - (x1 - x0) * s) / 2 - x0 * s, y: top + pad + (vh - (y1 - y0) * s) / 2 - y0 * s });
+  return [x0, y0, x1, y1];
+}
+
+// table.jpg: the round tabletop is centred at (50%, 47.8%) and is ~77% of the picture's width.
+// Size it so the tabletop covers all the pieces with a little margin.
+function placeRoom() {
+  const [x0, y0, x1, y1] = puzzleBounds();
+  const img = G.room.image();
+  const top = Math.max(x1 - x0, y1 - y0) * 1.25;
+  const w = top / 0.77, h = w * (img.height / img.width);
+  const off = readJSON('pt-room-off-' + G.code, { x: 0, y: 0 }); // where you slid the puzzle last time
+  G.room.setAttrs({ x: (x0 + x1) / 2 - w * 0.5 + off.x, y: (y0 + y1) / 2 - h * 0.478 + off.y, width: w, height: h });
+  G.roomBase = { x: G.room.x() - off.x, y: G.room.y() - off.y };
+  G.room.to({ opacity: 1, duration: 0.4 });
+}
+
+// Dragging empty space pans the view (table and puzzle together). Double-tap an empty spot first and
+// the next drag slides only the puzzle across the table: the room counter-moves so it stays put on screen.
+function setupPanByDoubleTap(stage) {
+  let armed = false, disarm = 0, start = null;
+  stage.on('dblclick dbltap', (e) => {
+    if (e.target !== stage) return; // on a piece that's the rotate gesture
+    armed = true;
+    toast('اسحب لتحريك الأحجية فوق الطاولة ✋', 1500);
+    clearTimeout(disarm);
+    disarm = setTimeout(() => { armed = false; }, 4000);
+  });
+  stage.on('dragstart', (e) => {
+    if (e.target !== stage) return;
+    clearTimeout(disarm);
+    start = armed ? { sx: stage.x(), sy: stage.y(), rx: G.room.x(), ry: G.room.y() } : null;
+  });
+  stage.on('dragmove', (e) => {
+    if (e.target !== stage || !start) return;
+    const k = stage.scaleX();
+    G.room.position({ x: start.rx - (stage.x() - start.sx) / k, y: start.ry - (stage.y() - start.sy) / k });
+  });
+  stage.on('dragend', (e) => {
+    if (e.target !== stage) return;
+    if (start && G.roomBase) writeJSON('pt-room-off-' + G.code, { x: G.room.x() - G.roomBase.x, y: G.room.y() - G.roomBase.y });
+    start = null;
+    armed = false;
+  });
 }
 
 function setupGestures(stage) {
@@ -1042,6 +1164,30 @@ function animateRegionFill(rid, toColor) {
   requestAnimationFrame(step);
 }
 
+// Particle burst at a screen point: little dots fly outward, plus an emoji or two floating up.
+function burstAt(x, y, colors = ['#ff6fa5', '#a66bff', '#5ba8ff', '#ffd166'], emojis = ['✨'], n = 14) {
+  for (let i = 0; i < n; i++) {
+    const d = document.createElement('span');
+    d.className = 'fxDot';
+    const a = (i / n) * Math.PI * 2 + Math.random() * 0.4, r = 40 + Math.random() * 50;
+    d.style.left = x + 'px'; d.style.top = y + 'px';
+    d.style.background = colors[i % colors.length];
+    d.style.setProperty('--dx', Math.cos(a) * r + 'px');
+    d.style.setProperty('--dy', Math.sin(a) * r + 'px');
+    document.body.append(d);
+    setTimeout(() => d.remove(), 800);
+  }
+  for (const e of emojis) {
+    const f = document.createElement('span');
+    f.className = 'fxEmoji';
+    f.textContent = e;
+    f.style.left = x + (Math.random() * 40 - 20) + 'px'; f.style.top = y + 'px';
+    document.body.append(f);
+    setTimeout(() => f.remove(), 1100);
+  }
+}
+const nodeCenter = (node) => { const r = node.getClientRect(); return [r.x + r.width / 2, r.y + r.height / 2]; };
+
 // A quick expanding, fading ring at the tap point — purely cosmetic, makes a fill feel responsive.
 function rippleAt(x, y, color) {
   const ring = new Konva.Circle({ x, y, radius: 2, stroke: color, strokeWidth: 6, opacity: 0.6, listening: false });
@@ -1077,14 +1223,14 @@ function pickColorAt(x, y) {
   pushRecent(hex);
   renderSwatches();
   rippleAt(x, y, hex);
-  toast('Color picked 🎨', 1200);
+  toast('تمّ أخذ اللون 🎨', 1200);
 }
 function setPicking(on) {
   G.picking = on;
   $('pickerBtn').classList.toggle('on', on);
   if (G.mode === 'fill') G.stage.draggable(!on && G.fillTool === 'fill');
 }
-$('pickerBtn').onclick = () => { closePanels(); setPicking(!G.picking); if (G.picking) toast('Tap the picture to pick a color', 1600); };
+$('pickerBtn').onclick = () => { closePanels(); setPicking(!G.picking); if (G.picking) toast('اضغط على الصورة لأخذ لون منها', 1600); };
 
 function onFillTap() {
   if (G.fillTool === 'brush' || G.picking) return;
@@ -1110,9 +1256,11 @@ function onFillTap() {
   const prev = G.regionColors.get(rid) || null;
   animateRegionFill(rid, color);
   rippleAt(pos.x, pos.y, color);
+  const sp = G.stage.getPointerPosition();
+  if (sp) burstAt(sp.x, sp.y, [color, color, '#ffffff'], [['✨', '🎨', '💖'][Math.floor(Math.random() * 3)]], 16);
   playPop();
   G.history.push({ kind: 'region', id: rid, prev });
-  store.update(G.code, { ['regions/' + rid]: color }).catch((e) => toast('Sync error: ' + e.message, 3000));
+  store.update(G.code, { ['regions/' + rid]: color }).catch((e) => toast('خطأ في المزامنة: ' + e.message, 3000));
 }
 
 // ---- drawing: brush styles (marker/crayon/watercolor) ----
@@ -1208,6 +1356,11 @@ function continueStroke(x, y) {
   strokeSegment(prev[0], prev[1], x, y, s.color, (ptWidth(s, prev) + s.width * f) / 2, s.type);
   G.remoteCursors.set(s.id, pts.length);
   showStrokes();
+  if (now - (G.lastSparkle || 0) > 220 && s.type !== 'erase') { // a few sparkles trail the brush
+    G.lastSparkle = now;
+    const sp = G.stage.getPointerPosition();
+    if (sp) burstAt(sp.x, sp.y, [s.color, '#ffffff'], [], 5);
+  }
   const t = performance.now();
   if (t - G.lastSync > 70) { G.lastSync = t; syncStroke(); }
 }
@@ -1288,6 +1441,7 @@ function wireDrawing(stage) {
       return;
     }
     if (!brushOn()) return;
+    if (G.guessGame && !(roundLive() && amDrawer() && !G.gs.doneDrawing)) return; // only the artist draws
     const p = G.konvaImage.getRelativePointerPosition();
     if (p.x < 0 || p.y < 0 || p.x > G.W || p.y > G.H) return;
     G.drawing = true;
@@ -1432,7 +1586,7 @@ function setTool(t) {
   $('toolBrush').classList.toggle('on', t === 'brush');
   $('eraser').classList.toggle('on', t === 'erase');
   $('brushTypeRow').hidden = t === 'erase';
-  $('brushPopTitle').textContent = t === 'erase' ? 'Eraser size' : 'Brush size';
+  $('brushPopTitle').textContent = t === 'erase' ? 'حجم الممحاة' : 'حجم الفرشاة';
   if (G.mode === 'fill') G.stage.draggable(t === 'fill');
   updateSizeDot();
 }
@@ -1478,7 +1632,7 @@ $('clearPage').onclick = () => {
   wipeCanvas();
   const patch = { ['meta/clearSeq']: G.clearSeq, strokes: null };
   if (G.mode === 'fill') patch.regions = null;
-  store.update(G.code, patch).catch((e) => toast('Sync error: ' + e.message, 3000));
+  store.update(G.code, patch).catch((e) => toast('خطأ في المزامنة: ' + e.message, 3000));
 };
 function wipeCanvas() {
   paintBase();
@@ -1560,14 +1714,805 @@ async function startColorGame(code, data, preloadedImg) {
   fit();
   setupGestures(stage);
 
+  if (data.meta.game === 'guess') setupGuessGame();
   G.unsub = store.subscribe(code, {
     onRegion: (id, color) => onRegion(id, color),
     onStroke: (id, s) => onStroke(id, s),
     onClear: (seq) => onClear(seq),
+    onGame: (gs) => onGame(gs),
+    onGuess: (id, g) => onGuess(id, g),
     onPlayers,
     onHolds: () => {},
   });
   store.join(code, { name: me.name, color: me.color }).catch(() => {});
+}
+
+// ---------- Draw & Guess (ارسم وخمّن) ----------
+// One player draws a secret فصحى word, the other types guesses. Round state lives in `game/`
+// (both phones render from it); guesses are append-only under `guesses/`, tagged with their round.
+const ROUND_MS = 90000;
+
+const normAr = (s) => s.trim()
+  .replace(/[ً-ٰٟـ]/g, '') // tashkeel + tatweel
+  .replace(/[أإآٱ]/g, 'ا').replace(/ة/g, 'ه').replace(/ى/g, 'ي')
+  .split(/\s+/).map((w) => w.replace(/^ال/, '')).join(' ');
+function editDistance(a, b) {
+  const d = Array.from({ length: a.length + 1 }, (_, i) => [i]);
+  for (let j = 1; j <= b.length; j++) d[0][j] = j;
+  for (let i = 1; i <= a.length; i++) for (let j = 1; j <= b.length; j++) {
+    d[i][j] = Math.min(d[i - 1][j] + 1, d[i][j - 1] + 1, d[i - 1][j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+  }
+  return d[a.length][b.length];
+}
+const arNum = (n) => String(n); // Western digits (1, 2, 3) on purpose
+const amDrawer = () => G?.gs?.drawer === store.uid;
+const roundLive = () => G?.gs && !G.gs.solved;
+
+function setupGuessGame() {
+  G.guessGame = true;
+  G.gs = null;
+  G.guesses = [];
+  $('guessUI').hidden = false;
+  G.guessTimer = setInterval(tickGuess, 250);
+  renderGuess();
+}
+
+// Every word ever played is remembered online (a fixed 6-letter room, so existing database rules
+// allow it) and never offered again, across all games.
+const WORDS_ROOM = 'HNWRDS';
+const wordKey = (w) => normAr(w).replace(/[.#$\[\]\/]/g, '');
+async function pickFreshWord() {
+  let used = {};
+  try { used = (await store.loadRoom(WORDS_ROOM))?.used || {}; } catch {}
+  const left = GUESS_WORDS.filter((w) => !used[wordKey(w)]);
+  if (!left.length) return null;
+  const word = left[Math.floor(Math.random() * left.length)];
+  if (!store.online && !(await store.loadRoom(WORDS_ROOM))) await store.createRoom(WORDS_ROOM, { used: {} });
+  await store.update(WORDS_ROOM, { ['used/' + wordKey(word)]: Date.now() });
+  if (left.length - 1 <= 30) toast(`تبقّت ${left.length - 1} كلمة جديدة فقط`, 2500);
+  return word;
+}
+
+async function startRound() {
+  if (G.startingRound) return;
+  G.startingRound = true;
+  try {
+    const prev = G.gs;
+    const others = Object.keys(G.players || {}).filter((u) => G.players[u]);
+    // take turns: whoever didn't draw last time draws now
+    const drawer = prev ? (others.find((u) => u !== prev.drawer) || store.uid) : store.uid;
+    const names = { ...(prev?.names || {}) };
+    for (const u of others) names[u] = G.players[u].name;
+    names[store.uid] = me.name;
+    const word = await pickFreshWord();
+    if (!word) { toast('لعبتما كل الكلمات! اطلب إضافة كلمات جديدة 🎉', 4000); return; }
+    const game = {
+      round: (prev?.round || 0) + 1, drawer, word, endsAt: Date.now() + ROUND_MS,
+      solved: null, doneDrawing: false, scores: prev?.scores || {}, names,
+    };
+    G.clearSeq = (G.clearSeq || 0) + 1;
+    wipeCanvas();
+    await store.update(G.code, { game, strokes: null, ['meta/clearSeq']: G.clearSeq });
+  } catch (e) {
+    toast('خطأ: ' + e.message, 3000);
+  } finally {
+    G.startingRound = false;
+  }
+}
+
+// The artist says "I'm done": drawing locks and the guesser gets at most 30 more seconds.
+function finishDrawing() {
+  const gs = G.gs;
+  if (!roundLive() || !amDrawer() || gs.doneDrawing) return;
+  closePanels();
+  store.update(G.code, { game: { ...gs, doneDrawing: true, endsAt: Math.min(gs.endsAt, Date.now() + 30000) } }).catch(() => {});
+}
+$('doneDrawing').onclick = finishDrawing;
+
+function endRound(solved) {
+  const gs = G.gs;
+  if (!gs || gs.solved) return;
+  const scores = { ...(gs.scores || {}) };
+  if (solved !== 'timeout') {
+    scores[solved.uid] = (scores[solved.uid] || 0) + 2; // the one who guessed
+    scores[gs.drawer] = (scores[gs.drawer] || 0) + 1;   // and the artist, for a drawing that worked
+  }
+  store.update(G.code, { game: { ...gs, solved, scores } }).catch(() => {});
+}
+
+function onGame(gs) {
+  if (!G?.guessGame) return;
+  const before = G.gs;
+  G.gs = gs;
+  if (gs && before?.round !== gs.round) {
+    if (before) playPop();
+    if (!amDrawer()) closePanels();
+  }
+  if (gs?.doneDrawing && !before?.doneDrawing && before?.round === gs.round && !amDrawer()) {
+    toast('انتهى الرسم! خمّن الآن ⏳', 2500);
+    playPop();
+  }
+  if (gs?.solved && !before?.solved && before?.round === gs.round) {
+    if (gs.solved !== 'timeout') { playChime(); burstHearts(); } else playPop();
+  }
+  renderGuess();
+}
+
+function onGuess(id, g) {
+  if (!G?.guessGame || !g) return;
+  if (G.guesses.some((x) => x.id === id)) return;
+  G.guesses.push({ id, ...g });
+  if (g.uid !== store.uid && G.gs && g.round === G.gs.round && !g.ok) playPop();
+  renderFeed();
+}
+
+function submitGuess(e) {
+  e?.preventDefault();
+  const inp = $('guessInput');
+  const text = inp.value.trim();
+  if (!text || !roundLive() || amDrawer()) return;
+  inp.value = '';
+  const ok = normAr(text) === normAr(G.gs.word);
+  const id = 'g' + Date.now().toString(36) + Math.random().toString(36).slice(2, 5);
+  store.update(G.code, { ['guesses/' + id]: { uid: store.uid, name: me.name, text, round: G.gs.round, ok, t: Date.now() } }).catch(() => {});
+  if (ok) endRound({ uid: store.uid, name: me.name });
+  else {
+    const a = normAr(text), b = normAr(G.gs.word);
+    if (b.length > 3 && editDistance(a, b) === 1) toast('قريب جدًا! 🔥', 1500);
+  }
+}
+$('guessForm').onsubmit = submitGuess;
+
+function tickGuess() {
+  if (!G?.guessGame || !G.gs) return;
+  const left = Math.max(0, G.gs.endsAt - Date.now());
+  const t = $('guessTimer');
+  t.textContent = arNum(Math.ceil(left / 1000));
+  t.classList.toggle('hurry', left < 15000 && !G.gs.solved);
+  // the drawer ends a timed-out round; the guesser steps in if the drawer has gone quiet
+  if (!left && roundLive() && (amDrawer() || Date.now() - G.gs.endsAt > 3000)) endRound('timeout');
+}
+
+function wordHint(w) {
+  return [...w].map((c) => (c === ' ' ? '　' : '●')).join(' ');
+}
+
+function renderGuess() {
+  const gs = G.gs;
+  const live = roundLive();
+  const drawing = live && amDrawer();
+  $('guessBanner').hidden = !gs;
+  $('palette').hidden = !drawing || gs.doneDrawing;
+  $('doneDrawing').hidden = !drawing || gs.doneDrawing;
+  $('guessForm').hidden = !(live && !amDrawer());
+  if (gs) {
+    const drawerName = gs.names?.[gs.drawer] || 'شريكك';
+    $('guessWho').textContent = !live ? 'انتهت الجولة'
+      : drawing ? (gs.doneDrawing ? 'أنهيت الرسم، انتظر التخمين…' : 'ارسم الكلمة:')
+      : gs.doneDrawing ? `أنهى ${drawerName} الرسم… خمّن!` : `دور ${drawerName} في الرسم… خمّن!`;
+    $('guessWord').textContent = drawing || !live ? gs.word : wordHint(gs.word);
+    $('guessWord').classList.toggle('hint', live && !drawing);
+    $('guessLetters').textContent = live && !drawing ? `${arNum([...gs.word].filter((c) => c !== ' ').length)} أحرف` : '';
+    $('guessScores').replaceChildren(...Object.entries(gs.names || {}).map(([u, n]) => {
+      const s = document.createElement('span');
+      s.className = 'gScore' + (u === gs.drawer && live ? ' drawing' : '');
+      s.textContent = `${n} ${arNum(gs.scores?.[u] || 0)}`;
+      return s;
+    }));
+  }
+  // centre card: before the first round, or between rounds
+  const card = $('guessCard');
+  card.hidden = live;
+  if (!live) {
+    if (!gs) {
+      $('gcEmoji').textContent = '🎨';
+      $('gcTitle').textContent = 'رسم وقلع';
+      $('gcText').textContent = 'أحدكما يرسم كلمة سرّية، والآخر يحاول أن يخمّنها قبل انتهاء الوقت. التخمين الصحيح يمنح نقطتين، والرسّام نقطة.';
+    } else if (gs.solved === 'timeout') {
+      $('gcEmoji').textContent = '⏰';
+      $('gcTitle').textContent = 'انتهى الوقت!';
+      $('gcText').textContent = `الكلمة كانت: «${gs.word}»`;
+    } else {
+      $('gcEmoji').textContent = '🎉';
+      $('gcTitle').textContent = `أحسنت يا ${gs.solved.name}!`;
+      $('gcText').textContent = `الكلمة كانت: «${gs.word}»`;
+    }
+    const others = Object.keys(G.players || {}).filter((u) => G.players[u] && u !== store.uid);
+    const nextIsMe = !gs || !others.length || gs.drawer !== store.uid;
+    $('gcStart').textContent = !gs ? 'ابدأ اللعب ✏️' : nextIsMe ? 'دوري في الرسم ✏️' : 'الجولة التالية ▶';
+  }
+  renderFeed();
+  tickGuess();
+}
+
+function renderFeed() {
+  const box = $('guessFeed');
+  const round = G.gs?.round;
+  const items = G.guesses.filter((g) => g.round === round).slice(-4);
+  box.replaceChildren(...items.map((g) => {
+    const b = document.createElement('div');
+    b.className = 'gBubble' + (g.ok ? ' ok' : '') + (g.uid === store.uid ? ' mine' : '');
+    b.textContent = g.ok ? `✓ ${g.name} خمّن الكلمة!` : `${g.name}: ${g.text}`;
+    return b;
+  }));
+}
+
+function burstHearts() {
+  for (let i = 0; i < 14; i++) {
+    const h = document.createElement('span');
+    h.className = 'heartFx';
+    h.textContent = ['💖', '💕', '✨', '🎉'][i % 4];
+    h.style.left = 10 + Math.random() * 80 + '%';
+    h.style.animationDelay = Math.random() * 0.4 + 's';
+    document.body.append(h);
+    setTimeout(() => h.remove(), 2200);
+  }
+}
+$('gcStart').onclick = () => startRound();
+
+// ---------- «من يعرف الآخر أكثر؟» (Love Quiz) ----------
+// Each round one player (the subject) answers about themselves and the other guesses; roles swap
+// every question. Round state lives in `game/`; answers are append-only under `guesses/`.
+const QUIZ_LEN = 10;
+const QUIZ_ROOM = 'HNQUIZ'; // remembers asked questions so they don't come back until all are used
+
+const QUIZ_CATS_KEY = 'pt-quiz-cats';
+const loadCats = () => readJSON(QUIZ_CATS_KEY, QUIZ_CATS.filter((c) => c.on).map((c) => c.id));
+
+async function pickFreshQuestion(cats) {
+  let used = {};
+  try { used = (await store.loadRoom(QUIZ_ROOM))?.used || {}; } catch {}
+  const pool = QUIZ.map((q, i) => (cats.includes(q.c) ? i : -1)).filter((i) => i >= 0);
+  let left = pool.filter((i) => !used['q' + i]);
+  if (!left.length) {
+    const reset = {};
+    for (const i of pool) reset['used/q' + i] = null; // start these categories over
+    await store.update(QUIZ_ROOM, reset).catch(() => {});
+    left = pool;
+    toast('أنهيتما كل الأسئلة! نبدأ من جديد 💞', 2500);
+  }
+  const qi = left[Math.floor(Math.random() * left.length)];
+  if (!store.online && !(await store.loadRoom(QUIZ_ROOM))) await store.createRoom(QUIZ_ROOM, { used: {} });
+  await store.update(QUIZ_ROOM, { ['used/q' + qi]: Date.now() });
+  return qi;
+}
+
+async function startQuizGame(code) {
+  G = { kind: 'quiz', code, players: {}, holds: {}, qs: null, answers: [], shownRound: null };
+  $('quizUI').hidden = false;
+  $('palette').hidden = true;
+  $('ghost').hidden = true;
+  $('progress').textContent = 'شكون فينا كيعرف لاخر كثر؟';
+  renderQuiz();
+  G.unsub = store.subscribe(code, {
+    onGroup() {}, onPiece() {}, onHolds() {}, onPlayers,
+    onGame: (qs) => onQuizState(qs),
+    onGuess: (id, a) => onQuizAnswer(id, a),
+  });
+  store.join(code, { name: me.name, color: me.color }).catch(() => {});
+}
+
+const quizOthers = () => Object.keys(G.players || {}).filter((u) => G.players[u] && u !== store.uid);
+const ansFor = (qs, uid) => G.answers.find((a) => a.game === qs.game && a.round === qs.round && a.uid === uid);
+const otherAns = (qs) => G.answers.find((a) => a.game === qs.game && a.round === qs.round && a.uid !== qs.subject);
+
+async function nextQuizRound() {
+  if (G.busy) return;
+  G.busy = true;
+  try {
+    const prev = G.qs;
+    if (prev && !prev.finished && prev.round >= prev.total && prev.revealed) {
+      await store.update(G.code, { game: { ...prev, finished: true } });
+      return;
+    }
+    const newGame = !prev || prev.finished;
+    const names = { ...(prev?.names || {}) };
+    for (const u of quizOthers()) names[u] = G.players[u].name;
+    names[store.uid] = me.name;
+    const cats = newGame ? loadCats() : prev.cats || loadCats();
+    if (!cats.length) { toast('اختر فئة واحدة على الأقل', 2500); return; }
+    const qi = await pickFreshQuestion(cats);
+    // roles swap every question; a new game starts with whoever pressed the button
+    const subject = newGame ? store.uid : (prev.subject === store.uid ? (quizOthers()[0] || store.uid) : store.uid);
+    const base = newGame
+      ? { game: (prev?.game || 0) + 1, round: 1, total: QUIZ_LEN, scores: {}, asked: {} }
+      : { ...prev, round: prev.round + 1 };
+    const qs = { ...base, qi, subject, names, cats, revealed: false, finished: false, lastMatch: null };
+    qs.asked = { ...(qs.asked || {}), [subject]: ((qs.asked || {})[subject] || 0) + 1 }; // questions asked ABOUT this person
+    await store.update(G.code, { game: qs });
+  } catch (e) {
+    toast('خطأ: ' + e.message, 3000);
+  } finally {
+    G.busy = false;
+  }
+}
+
+function answerQuiz(choice) {
+  const qs = G.qs;
+  if (!qs || qs.revealed || ansFor(qs, store.uid)) return;
+  const id = 'a' + Date.now().toString(36) + Math.random().toString(36).slice(2, 5);
+  const a = { uid: store.uid, game: qs.game, round: qs.round, choice };
+  onQuizAnswer(id, a); // show the pick immediately; the store's echo is de-duplicated by id
+  store.update(G.code, { ['guesses/' + id]: a }).catch(() => {});
+  playPop();
+}
+
+function onQuizState(qs) {
+  if (G?.kind !== 'quiz') return;
+  const before = G.qs;
+  G.qs = qs;
+  const newlyRevealed = qs?.revealed && before && !(before.revealed && before.round === qs.round && before.game === qs.game);
+  if (newlyRevealed) { if (qs.lastMatch) { playChime(); burstHearts(); } else playPop(); }
+  if (qs?.finished && before && !before.finished) burstHearts();
+  renderQuiz();
+  maybeReveal();
+}
+
+function onQuizAnswer(id, a) {
+  if (G?.kind !== 'quiz' || !a || G.answers.some((x) => x.id === id)) return;
+  G.answers.push({ id, ...a });
+  renderQuiz();
+  maybeReveal();
+}
+
+// Both answers in → the subject's phone scores it (one writer, so points never double-count).
+function maybeReveal() {
+  const qs = G.qs;
+  if (!qs || qs.revealed || qs.subject !== store.uid) return;
+  const mine = ansFor(qs, qs.subject);
+  const theirs = otherAns(qs);
+  if (!mine || !theirs) return;
+  const match = mine.choice === theirs.choice;
+  const scores = { ...(qs.scores || {}) };
+  if (match) scores[theirs.uid] = (scores[theirs.uid] || 0) + 1; // the point goes to whoever guessed right
+  store.update(G.code, { game: { ...qs, revealed: true, lastMatch: match, scores } }).catch(() => {});
+}
+
+function el(tag, cls, text) {
+  const e = document.createElement(tag);
+  if (cls) e.className = cls;
+  if (text != null) e.textContent = text;
+  return e;
+}
+
+function renderQuiz() {
+  const box = $('quizStage');
+  const qs = G.qs;
+  const nm = (u) => qs?.names?.[u] || G.players?.[u]?.name || 'شريكك';
+  box.replaceChildren();
+
+  if (!qs || qs.finished) {
+    const card = el('div', 'qPanel deal');
+    if (!qs) {
+      const img = el('img', 'qCover');
+      img.src = 'games/quiz.jpg';
+      img.alt = '';
+      card.append(img, el('h2', null, 'شكون فينا كيعرف لاخر كثر؟'),
+        el('p', null, `${QUIZ_LEN} أسئلة. في كل سؤال يجيب أحدكما عن نفسه، ويخمّن الآخر إجابته. كل تخمين صحيح بنقطة!`));
+    } else {
+      const ids = Object.keys(qs.names);
+      card.append(el('div', 'qBig', '🏆'), el('h2', null, 'النتيجة النهائية'));
+      const rows = el('div', 'qScores');
+      for (const u of ids) {
+        const other = ids.find((x) => x !== u);
+        const row = el('div', 'qScoreRow');
+        row.append(el('b', null, nm(u)), el('span', null, `${qs.scores?.[u] || 0} / ${other ? qs.asked?.[other] || 0 : 0}`));
+        rows.append(row);
+      }
+      card.append(rows);
+      const [a, b] = ids;
+      const sa = qs.scores?.[a] || 0, sb = qs.scores?.[b] || 0;
+      if (b) card.append(el('p', null, sa === sb ? 'تعادل! كلاكما يعرف الآخر جيدًا 💞' : `الفائز: ${nm(sa > sb ? a : b)} 🎉`));
+    }
+    card.append(el('small', 'qCatsTitle', 'اختر الفئات:'));
+    const chips = el('div', 'qCats');
+    const chosen = loadCats();
+    for (const c of QUIZ_CATS) {
+      const n = QUIZ.filter((q) => q.c === c.id).length;
+      const chip = el('button', 'qChip' + (chosen.includes(c.id) ? ' on' : '') + (c.id === 'intimate' ? ' adult' : ''), `${c.label} · ${n}`);
+      chip.onclick = () => {
+        const cur = loadCats();
+        writeJSON(QUIZ_CATS_KEY, cur.includes(c.id) ? cur.filter((x) => x !== c.id) : [...cur, c.id]);
+        renderQuiz();
+      };
+      chips.append(chip);
+    }
+    card.append(chips);
+    const btn = el('button', 'primary', !qs ? 'ابدأ اللعب 💞' : 'لعبة جديدة 🔄');
+    btn.onclick = nextQuizRound;
+    card.append(btn);
+    if (!quizOthers().length) card.append(el('small', 'qWait', 'أرسل رمز الغرفة لشريكك من زر 💌'));
+    box.append(card);
+    return;
+  }
+
+  const q = QUIZ[qs.qi];
+  const iAmSubject = qs.subject === store.uid;
+  const myAns = ansFor(qs, store.uid);
+  const subjAns = ansFor(qs, qs.subject);
+  const guessAns = otherAns(qs);
+  const key = `${qs.game}:${qs.round}`;
+  const freshRound = G.shownRound !== key;
+  G.shownRound = key;
+
+  const top = el('div', 'qTop');
+  top.append(el('span', 'qPill', `السؤال ${qs.round} من ${qs.total}`));
+  top.append(el('span', 'qPill', Object.keys(qs.names).map((u) => `${nm(u)} ${qs.scores?.[u] || 0}`).join('  ·  ')));
+  box.append(top);
+
+  const card = el('div', 'qCard' + (freshRound ? ' flipIn' : ''));
+  const face = el('div', 'qFace');
+  face.append(el('small', 'qCatTag', QUIZ_CATS.find((c) => c.id === q.c)?.label || ''));
+  face.append(el('span', 'qRole', iAmSubject ? 'أجب عن نفسك 💭' : `خمّن إجابة ${nm(qs.subject)} 🔮`));
+  face.append(el('h2', 'qText', iAmSubject ? q.me : q.them.replace('{n}', nm(qs.subject))));
+  card.append(face, el('div', 'qBack'));
+  box.append(card);
+
+  const grid = el('div', 'qOptions');
+  q.o.forEach((text, i) => {
+    const b = el('button', 'qOpt' + (freshRound ? ' dealIn' : ''));
+    b.style.setProperty('--i', i);
+    b.append(el('span', 'qOptText', text));
+    if (qs.revealed) {
+      b.classList.add('reveal');
+      if (subjAns?.choice === i) { b.classList.add('truth'); b.append(el('small', 'qTag', `✔ إجابة ${nm(qs.subject)}`)); }
+      if (guessAns?.choice === i) {
+        b.classList.add(subjAns?.choice === i ? 'hit' : 'miss');
+        b.append(el('small', 'qTag', `🔮 تخمين ${nm(guessAns.uid)}`));
+      }
+    } else if (myAns) {
+      b.classList.add(myAns.choice === i ? 'picked' : 'dim');
+    }
+    b.disabled = !!myAns || qs.revealed;
+    b.onclick = () => answerQuiz(i);
+    grid.append(b);
+  });
+  box.append(grid);
+
+  const foot = el('div', 'qFoot');
+  if (qs.revealed) {
+    foot.append(el('div', 'qResult ' + (qs.lastMatch ? 'yes' : 'no'),
+      qs.lastMatch ? `🎉 أصاب ${nm(guessAns?.uid)}!` : '😅 ليس هذه المرّة'));
+    const btn = el('button', 'primary', qs.round >= qs.total ? 'النتيجة النهائية 🏆' : 'السؤال التالي ←');
+    btn.onclick = nextQuizRound;
+    foot.append(btn);
+  } else if (myAns) {
+    const waitFor = iAmSubject ? quizOthers()[0] : qs.subject;
+    foot.append(el('div', 'qWait', waitFor ? `بانتظار ${nm(waitFor)}… ⏳` : 'بانتظار شريكك… ⏳'));
+  }
+  box.append(foot);
+}
+
+// ---------- «حقيقة أم تحدٍّ» (Truth or Dare) ----------
+// State in `game/`: phase spin → pick → card → result, then the turn passes. Emoji reactions are
+// append-only under `guesses/`. The bottle points down at "me" and up at the partner on each phone.
+const TOD_ROOM = 'HNTODX'; // remembers used truths/dares so none repeats until a category runs out
+const TOD_CATS_KEY = 'pt-tod-cats';
+const SPIN_MS = 3200;
+const DRUM_MS = 1100;
+const loadTodCats = () => readJSON(TOD_CATS_KEY, TOD_CATS.filter((c) => c.on).map((c) => c.id));
+const todOthers = () => Object.keys(G.players || {}).filter((u) => G.players[u] && u !== store.uid);
+
+// New truths/dares arrive weekly in tod-extra.json on the live site (fetched from there even inside
+// the APK, so no rebuild is needed). Merged once per session, de-duplicated by id.
+const TOD_EXTRA_URL = 'https://nourddine90-lab.github.io/puzzle-together/tod-extra.json';
+let todAll = TOD;
+async function loadTodExtras() {
+  for (const url of [TOD_EXTRA_URL + '?v=' + Date.now(), 'tod-extra.json']) {
+    try {
+      const r = await fetch(url, { cache: 'no-store' });
+      if (!r.ok) continue;
+      const extra = await r.json();
+      const seen = new Set(TOD.map((x) => x.id));
+      const add = extra.filter((x) => x?.t && x.kind && x.c).map((x) => ({ ...x, id: todId(x.kind, x.t) })).filter((x) => !seen.has(x.id) && seen.add(x.id));
+      todAll = [...TOD, ...add];
+      return;
+    } catch {}
+  }
+}
+const todExtrasReady = loadTodExtras();
+
+// Never repeats: a played item is remembered forever. When a pool is empty, wait for next week's batch.
+async function pickFreshTod(kind, cats) {
+  await todExtrasReady;
+  let used = {};
+  try { used = (await store.loadRoom(TOD_ROOM))?.used || {}; } catch {}
+  const left = todAll.filter((x) => x.kind === kind && cats.includes(x.c) && !used['u' + x.id]);
+  if (!left.length) return null;
+  const item = left[Math.floor(Math.random() * left.length)];
+  if (!store.online && !(await store.loadRoom(TOD_ROOM))) await store.createRoom(TOD_ROOM, { used: {} });
+  await store.update(TOD_ROOM, { ['used/u' + item.id]: Date.now() });
+  if (left.length <= 5) toast(`تبقّى ${left.length - 1} فقط في هذه الفئات، الجديد يصل كل أسبوع ✨`, 3000);
+  return { kind: item.kind, c: item.c, t: item.t };
+}
+
+function startTodGame(code) {
+  G = { kind: 'tod', code, players: {}, holds: {}, ts: null, seen: new Set(), lastKey: null, timers: [] };
+  $('todUI').hidden = false;
+  $('palette').hidden = true;
+  $('ghost').hidden = true;
+  $('progress').textContent = 'الصراحة ولا التحدي';
+  renderTod();
+  todExtrasReady.then(() => { if (G?.kind === 'tod' && !G.ts) renderTod(); }); // refresh the counts
+  G.unsub = store.subscribe(code, {
+    onGroup() {}, onPiece() {}, onHolds() {}, onPlayers,
+    onGame: (ts) => onTodState(ts),
+    onGuess: (id, r) => onTodReaction(id, r),
+  });
+  store.join(code, { name: me.name, color: me.color }).catch(() => {});
+}
+
+function todNames(prev) {
+  const names = { ...(prev?.names || {}) };
+  for (const u of todOthers()) names[u] = G.players[u].name;
+  names[store.uid] = me.name;
+  return names;
+}
+
+function spinBottle() {
+  const prev = G.ts;
+  const cats = prev?.cats || loadTodCats();
+  if (!cats.length) { toast('اختر فئة واحدة على الأقل', 2500); return; }
+  const names = todNames(prev);
+  // two players → the 8 slots alternate their names; alone, the other slots wait for the partner
+  const ids = Object.keys(names).sort().slice(0, 2);
+  if (ids.length < 2) ids.push('');
+  const slot = Math.floor(Math.random() * TOD_SLOTS);
+  const ts = {
+    round: (prev?.round || 0) + 1, phase: 'spin', slot, ids, turn: ids[slot % 2] || null, spinAt: Date.now(),
+    turns: 4 + Math.floor(Math.random() * 3), wobble: Math.round(Math.random() * 16 - 8), names, hearts: prev?.hearts || {}, cats,
+  };
+  store.update(G.code, { game: ts }).catch((e) => toast('خطأ: ' + e.message, 3000));
+}
+
+async function chooseTod(kind) {
+  const ts = G.ts;
+  if (!ts || ts.turn !== store.uid || G.picking) return;
+  G.picking = true;
+  try {
+    const item = await pickFreshTod(kind, ts.cats || loadTodCats());
+    if (!item) { toast(kind === 'truth' ? 'لعبتما كل الحقائق في هذه الفئات! جرّبا «تحدٍّ» أو فئة أخرى، والجديد يصل الأسبوع القادم ✨' : 'لعبتما كل التحدّيات في هذه الفئات! جرّبا «حقيقة» أو فئة أخرى، والجديد يصل الأسبوع القادم ✨', 4500); return; }
+    await store.update(G.code, { game: { ...ts, phase: 'card', kind, item, cardAt: Date.now() } });
+  } catch (e) {
+    toast('خطأ: ' + e.message, 3000);
+  } finally {
+    G.picking = false;
+  }
+}
+
+function finishTod(outcome) {
+  const ts = G.ts;
+  if (!ts || ts.phase !== 'card') return;
+  const hearts = { ...(ts.hearts || {}) };
+  if (outcome === 'done') hearts[ts.turn] = (hearts[ts.turn] || 0) + 1;
+  store.update(G.code, { game: { ...ts, phase: 'result', outcome, hearts } }).catch(() => {});
+}
+
+function nextTodTurn() {
+  const ts = G.ts;
+  const other = Object.keys(ts.names).find((u) => u !== ts.turn) || store.uid;
+    const ids = ts.ids || Object.keys(ts.names).sort();
+  // keep the bottle pointing at a tag of whoever's turn it is now
+  const slot = ids.indexOf(other) >= 0 ? ids.indexOf(other) : 0;
+  store.update(G.code, {
+    game: { ...ts, round: ts.round + 1, phase: 'pick', turn: other, slot, turns: 0, wobble: 0, names: todNames(ts), kind: null, item: null, outcome: null },
+  }).catch(() => {});
+}
+
+function sendReaction(emoji) {
+  const id = 'r' + Date.now().toString(36) + Math.random().toString(36).slice(2, 5);
+  store.update(G.code, { ['guesses/' + id]: { uid: store.uid, emoji, t: Date.now() } }).catch(() => {});
+}
+
+function onTodReaction(id, r) {
+  if (G?.kind !== 'tod' || !r?.emoji || G.seen.has(id)) return;
+  G.seen.add(id);
+  if (Date.now() - r.t > 6000) return; // old reactions from before we joined: don't replay
+  playPop();
+  for (let i = 0; i < 6; i++) {
+    const f = el('span', 'todFloat', r.emoji);
+    f.style.left = (r.uid === store.uid ? 55 : 15) + Math.random() * 30 + '%';
+    f.style.animationDelay = i * 0.08 + 's';
+    f.style.fontSize = 28 + Math.random() * 18 + 'px';
+    document.body.append(f);
+    setTimeout(() => f.remove(), 2600);
+  }
+}
+
+function confetti() {
+  const colors = ['#ff6fa5', '#a66bff', '#5ba8ff', '#ffd166', '#06d6a0'];
+  for (let i = 0; i < 70; i++) {
+    const c = el('span', 'confetti');
+    c.style.left = Math.random() * 100 + '%';
+    c.style.background = colors[i % colors.length];
+    c.style.setProperty('--dx', Math.random() * 200 - 100 + 'px');
+    c.style.setProperty('--rot', Math.random() * 720 - 360 + 'deg');
+    c.style.animationDelay = Math.random() * 0.3 + 's';
+    c.style.animationDuration = 1.6 + Math.random() * 1.2 + 's';
+    document.body.append(c);
+    setTimeout(() => c.remove(), 3400);
+  }
+}
+
+function onTodState(ts) {
+  if (G?.kind !== 'tod') return;
+  const before = G.ts;
+  G.ts = ts;
+  const key = ts ? `${ts.round}:${ts.phase}` : null;
+  const changed = key !== G.lastKey;
+  G.lastKey = key;
+  if (changed && ts && before) {
+    if (ts.phase === 'spin') playSfx('spin');
+    if (ts.phase === 'card') playSfx('drumroll', 0.7);
+    if (ts.phase === 'result') {
+      if (ts.outcome === 'done') { playSfx('cheer'); confetti(); burstHearts(); } else playSfx('fail');
+    }
+    if (ts.phase === 'pick' && ts.turn === store.uid) toast('دورك! 🎯', 1500);
+  }
+  renderTod();
+}
+
+const TOD_SLOTS = 8;
+const seatAngle = (ts) => ts.turns * 360 + (ts.slot ?? 0) * (360 / TOD_SLOTS) + ts.wobble;
+
+// Name tags around the table, the same on both phones (slot 0 at the top, clockwise).
+function nameRing(ts, nm, lit) {
+  const ids = ts.ids || Object.keys(ts.names).sort();
+  return Array.from({ length: TOD_SLOTS }, (_, i) => {
+    const u = ids[i % 2];
+    const a = (i * 360 / TOD_SLOTS) * Math.PI / 180;
+    const tag = el('div', 'todSlot' + (u === store.uid ? ' me' : '') + (lit && i === ts.slot ? ' lit' : ''), u ? nm(u) : 'شريكك');
+    tag.style.left = 50 + 50 * Math.sin(a) + '%';
+    tag.style.top = 50 - 50 * Math.cos(a) + '%';
+    return tag;
+  });
+}
+
+function renderTod() {
+  G.timers.forEach(clearTimeout);
+  G.timers = [];
+  const box = $('todStage');
+  const ts = G.ts;
+  const nm = (u) => ts?.names?.[u] || G.players?.[u]?.name || 'شريكك';
+  box.replaceChildren();
+
+  if (!ts) {
+    const card = el('div', 'qPanel deal');
+    const img = el('img', 'qCover');
+    img.src = 'games/tod.jpg';
+    img.alt = '';
+    card.append(img, el('h2', null, 'الصراحة ولا التحدي'),
+      el('p', null, 'لفّا القارورة! من تشير إليه يختار: حقيقة يجيب عنها بصدق، أو تحدٍّ ينفّذه. كل مهمّة تُنجز = ❤️'));
+    card.append(el('small', 'qCatsTitle', 'اختر الفئات:'));
+    const chips = el('div', 'qCats');
+    const chosen = loadTodCats();
+    for (const c of TOD_CATS) {
+      const n = todAll.filter((x) => x.c === c.id).length;
+      const chip = el('button', 'qChip' + (chosen.includes(c.id) ? ' on' : '') + (c.id === 'spicy' ? ' adult' : ''), `${c.label} · ${n}`);
+      chip.onclick = () => {
+        const cur = loadTodCats();
+        writeJSON(TOD_CATS_KEY, cur.includes(c.id) ? cur.filter((x) => x !== c.id) : [...cur, c.id]);
+        renderTod();
+      };
+      chips.append(chip);
+    }
+    card.append(chips);
+    const btn = el('button', 'primary', 'لفّ القارورة 🍾');
+    btn.onclick = spinBottle;
+    card.append(btn);
+    if (!todOthers().length) card.append(el('small', 'qWait', 'أرسل رمز الغرفة لشريكك من زر 💌'));
+    box.append(card);
+    return;
+  }
+
+  // scoreboard
+  const top = el('div', 'qTop');
+  top.append(el('span', 'qPill', `الجولة ${ts.round}`));
+  top.append(el('span', 'qPill', Object.keys(ts.names).map((u) => `${nm(u)} ❤️ ${ts.hearts?.[u] || 0}`).join('  ·  ')));
+  box.append(top);
+
+  const myTurn = ts.turn === store.uid;
+  const spinning = ts.phase === 'spin' && Date.now() - ts.spinAt < SPIN_MS;
+
+  if (ts.phase === 'spin' || ts.phase === 'pick') {
+    const table = el('div', 'todTable');
+    const ring = ts.phase === 'spin' ? nameRing(ts, nm, !spinning) : [];
+    const bottle = el('img', 'todBottle');
+    bottle.src = 'games/bottle.png';
+    bottle.alt = '';
+    const end = seatAngle(ts);
+    if (spinning) {
+      const elapsed = Date.now() - ts.spinAt;
+      bottle.style.transform = 'rotate(0deg)';
+      table.append(...ring, bottle);
+      box.append(table);
+      requestAnimationFrame(() => {
+        bottle.style.transition = `transform ${Math.max(200, SPIN_MS - elapsed)}ms cubic-bezier(.12, .7, .15, 1)`;
+        bottle.style.transform = `rotate(${end}deg)`;
+      });
+      box.append(el('div', 'todHint', 'القارورة تدور… 🍾'));
+      G.timers.push(setTimeout(() => {
+        if (G?.ts === ts) { if (ts.turn === store.uid) toast('دورك! 🎯', 1500); renderTod(); }
+      }, SPIN_MS - elapsed + 50));
+      return;
+    }
+    bottle.style.transform = `rotate(${end % 360}deg)`;
+    table.append(...(ring.length ? ring : nameRing({ ...ts, slot: ts.slot ?? 0 }, nm, true)), bottle);
+    box.append(table);
+
+    if (!ts.turn) {
+      box.append(el('div', 'todHint big', 'وقعت على شريكك! أرسل له الرمز من 💌'));
+    } else if (myTurn) {
+      box.append(el('div', 'todHint big', 'دورك! اختر 👇'));
+      const pick = el('div', 'todPick');
+      for (const [kind, label, img] of [['truth', 'حقيقة', 'games/truth.jpg'], ['dare', 'تحدٍّ', 'games/dare.jpg']]) {
+        const b = el('button', 'todChoice ' + kind);
+        b.style.backgroundImage = `url(${img})`;
+        b.append(el('span', null, label));
+        b.onclick = () => chooseTod(kind);
+        pick.append(b);
+      }
+      box.append(pick);
+    } else {
+      box.append(el('div', 'todHint big', `بانتظار اختيار ${nm(ts.turn)} ⏳`));
+    }
+    const again = el('button', 'todLink', '🍾 لفّ القارورة من جديد');
+    again.onclick = spinBottle;
+    box.append(again);
+    return;
+  }
+
+  // card / result
+  const item = ts.item;
+  if (!item) { // a round saved by an older version: just move on
+    const next = el('button', 'primary', 'الدور التالي ←');
+    next.onclick = nextTodTurn;
+    box.append(next);
+    return;
+  }
+  const drumming = ts.phase === 'card' && Date.now() - ts.cardAt < DRUM_MS;
+  const card = el('div', 'todCard ' + item.kind + (drumming ? ' shaking' : ' flipped'));
+  const back = el('div', 'todCardBack');
+  back.style.backgroundImage = `url(games/${item.kind}.jpg)`;
+  back.append(el('span', null, item.kind === 'truth' ? 'حقيقة' : 'تحدٍّ'));
+  const face = el('div', 'todCardFace');
+  face.append(el('small', 'todKind', `${item.kind === 'truth' ? '💗 حقيقة' : '⚡ تحدٍّ'} · ${TOD_CATS.find((c) => c.id === item.c)?.label || ''}`));
+  face.append(el('h2', 'todText', item.t.replaceAll('{n}', nm(Object.keys(ts.names).find((u) => u !== ts.turn) || ''))));
+  face.append(el('small', 'todWho', `🎯 ${nm(ts.turn)}`));
+  card.append(back, face);
+  box.append(card);
+  if (drumming) {
+    G.timers.push(setTimeout(() => { if (G?.ts === ts) { playSfx('flip'); renderTod(); } }, DRUM_MS - (Date.now() - ts.cardAt)));
+    return;
+  }
+
+  if (ts.phase === 'card') {
+    if (myTurn) {
+      const row = el('div', 'todActions');
+      const done = el('button', 'todDone', '✓ تمّ!');
+      done.onclick = () => finishTod('done');
+      const skip = el('button', 'todSkip', '😅 تخطٍّ');
+      skip.onclick = () => finishTod('skip');
+      row.append(skip, done);
+      box.append(row);
+    } else {
+      box.append(el('div', 'todHint', `حان دور ${nm(ts.turn)}… التشجيع مسموح! 👇`));
+    }
+  } else {
+    box.append(el('div', 'qResult ' + (ts.outcome === 'done' ? 'yes' : 'no'),
+      ts.outcome === 'done' ? `🎉 برافو يا ${nm(ts.turn)}! +❤️` : '😅 تمّ التخطّي هذه المرّة'));
+    const next = el('button', 'primary', 'الدور التالي ←');
+    next.onclick = nextTodTurn;
+    box.append(next);
+  }
+
+  const reacts = el('div', 'todReacts');
+  for (const e of ['😂', '😍', '🔥', '😳', '👏', '❤️']) {
+    const b = el('button', null, e);
+    b.onclick = () => sendReaction(e);
+    reacts.append(b);
+  }
+  box.append(reacts);
 }
 
 $('zoomIn').onclick = () => zoomAt(1.3);
@@ -1582,13 +2527,16 @@ $('back').onclick = () => { leaveGame(); showHome(); };
 $('winClose').onclick = () => { $('win').hidden = true; };
 $('share').onclick = async () => {
   const url = location.origin + location.pathname + '?room=' + G.code;
-  const text = G.kind === 'color' ? `Come color together 🎨 Code: ${G.code}` : `Come play our puzzle 🧩 Code: ${G.code}`;
+  const text = G.kind === 'tod' ? `تعال نلعب «حقيقة أم تحدٍّ» 🍾 الرمز: ${G.code}`
+    : G.kind === 'quiz' ? `تعال نلعب «من يعرف الآخر أكثر؟» 💞 الرمز: ${G.code}`
+    : G.guessGame ? `تعال نلعب «ارسم وخمّن» 🎨 الرمز: ${G.code}`
+    : G.kind === 'color' ? `تعال نلوّن معًا 🎨 الرمز: ${G.code}` : `تعال نركّب الأحجية 🧩 الرمز: ${G.code}`;
   try {
     if (navigator.share) await navigator.share({ title: 'Hajour Together', text, url });
-    else { await navigator.clipboard.writeText(`${text}\n${url}`); toast('Invite link copied'); }
+    else { await navigator.clipboard.writeText(`${text}\n${url}`); toast('تمّ نسخ رابط الدعوة'); }
   } catch {}
 };
-addEventListener('resize', () => G?.stage.size({ width: innerWidth, height: innerHeight }));
+addEventListener('resize', () => G?.stage?.size({ width: innerWidth, height: innerHeight }));
 document.addEventListener('pointerdown', unlockAudio, { once: true });
 
 // ---------- start ----------
@@ -1598,18 +2546,18 @@ async function boot() {
   } catch (e) {
     console.error(e);
     store = await createStore(true);
-    $('mode').textContent = '⚠️ Could not go online (' + e.message + '). Offline mode.';
+    $('mode').textContent = '⚠️ تعذّر الاتصال (' + e.message + '). وضع بلا اتصال.';
   }
   if (!$('mode').textContent) {
-    $('mode').textContent = store.online ? '🟢 Online — play together' : '🟡 Offline test mode (this device only)';
+    $('mode').textContent = store.online ? '🟢 متّصل — العبا معًا' : '🟡 وضع تجريبي بلا اتصال (هذا الجهاز فقط)';
   }
   renderCounts();
   renderList();
   if (!me) await askName();
-  $('who').textContent = `Hi ${me.name} 💕  (tap to change)`;
+  $('who').textContent = `أهلًا ${me.name} 💕  (اضغط للتغيير)`;
   const code = new URLSearchParams(location.search).get('room');
   if (code) openRoom(code.toUpperCase().replace(/[^A-Z0-9]/g, ''));
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
 }
-if (location.hostname === 'localhost') window.__pt = () => G; // debugging only
+if (location.hostname === 'localhost') { window.__pt = () => G; window.__store = () => store; } // debugging only
 boot();

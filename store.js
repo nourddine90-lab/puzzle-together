@@ -61,6 +61,9 @@ async function firebaseStore(cfg) {
         );
       }
       if (h.onClear) offs.push(D.onValue(ref(code, 'meta/clearSeq'), (s) => h.onClear(s.val() || 0)));
+      // Draw & Guess: the round state, and every guess typed.
+      if (h.onGame) offs.push(D.onValue(ref(code, 'game'), (s) => h.onGame(s.val())));
+      if (h.onGuess) offs.push(D.onChildAdded(ref(code, 'guesses'), (s) => h.onGuess(s.key, s.val())));
       return () => offs.forEach((off) => off());
     },
     async join(code, me) {
@@ -96,6 +99,8 @@ function localStore() {
       else if (kind === 'regions' && h.onRegion) h.onRegion(id, v);
       else if (kind === 'strokes' && h.onStroke) h.onStroke(id, v);
       else if (kind === 'meta' && id === 'clearSeq' && h.onClear) h.onClear(v);
+      else if (kind === 'game' && h.onGame) h.onGame(read(code)?.game ?? null);
+      else if (kind === 'guesses' && id && v && h.onGuess) h.onGuess(id, v);
     }
   };
   const bc = 'BroadcastChannel' in self ? new BroadcastChannel('puzzle-together') : null;
@@ -111,16 +116,23 @@ function localStore() {
       if (!d) return;
       for (const [k, v] of Object.entries(patch)) {
         const [kind, id] = k.split('/');
+        if (id === undefined) { if (v === null) delete d[kind]; else d[kind] = v; continue; }
         d[kind] ??= {};
         if (v === null) delete d[kind][id];
         else d[kind][id] = v;
       }
       write(code, d);
       bc?.postMessage({ code, patch });
+      // Firebase echoes game/guess writes back to the writer; mirror that here.
+      const mine = Object.fromEntries(Object.entries(patch).filter(([k]) => /^(game|guesses)\b/.test(k)));
+      if (Object.keys(mine).length) emit(code, mine);
     },
     subscribe(code, h) {
       subs.set(code, h);
       h.onPlayers({ [uid]: me });
+      const d = read(code);
+      if (h.onGame) h.onGame(d?.game ?? null);
+      if (h.onGuess) for (const [id, v] of Object.entries(d?.guesses || {})) h.onGuess(id, v);
       return () => subs.delete(code);
     },
     async join(code, m) { me = m; },

@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en">
+<html lang="ar" dir="rtl">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
@@ -9,7 +9,7 @@
   <link rel="icon" href="icon-192.png">
   <link rel="apple-touch-icon" href="icon-192.png">
   <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fredoka:wght@400;500;600;700&display=swap">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fredoka:wght@400;500;600;700&family=Baloo+Bhaijaan+2:wght@400;600;700&display=swap">
   <link rel="stylesheet" href="style.css">
   <script src="konva.min.js"></script>
 </head>
@@ -19,38 +19,65 @@
   <h1>💕 Hajour Together</h1>
   <p class="sub" id="who" title="Change name"></p>
 
-  <div class="modes">
-    <button id="modePuzzle" class="modeBtn on">🧩 Puzzle</button>
-    <button id="modeColor" class="modeBtn">🎨 Color</button>
+  <h2 class="sectionTitle" id="gamesTitle">اللعيبات ديالنا</h2>
+  <div class="gameGrid" id="gameGrid">
+    <button class="gameCard" data-game="puzzle" dir="rtl">
+      <img src="games/puzzle.jpg" alt="">
+      <span class="gcInfo"><b>🧩 Puzzle</b><small>حوّلا صورة إلى أحجية وركّباها معًا</small></span>
+    </button>
+    <button class="gameCard" data-game="color" dir="rtl">
+      <img src="games/color.jpg" alt="">
+      <span class="gcInfo"><b>🎨 يالاه نلونو</b><small>لوّنا صوركما أو ارسما على صفحة بيضاء</small></span>
+    </button>
+    <button class="gameCard ar" data-game="guess" dir="rtl">
+      <img src="games/guess.jpg" alt="">
+      <span class="gcInfo"><b>✏️ رسم وقلع</b><small>أحدكما يرسم والآخر يخمّن الكلمة</small></span>
+    </button>
+    <button class="gameCard ar" data-game="quiz" dir="rtl">
+      <img src="games/quiz.jpg" alt="">
+      <span class="gcInfo"><b>💞 شكون فينا كيعرف لاخر كثر؟</b><small>أسئلة طريفة: هل تعرف إجابات شريكك؟</small></span>
+    </button>
+    <button class="gameCard ar" data-game="tod" dir="rtl">
+      <img src="games/tod.jpg" alt="">
+      <span class="gcInfo"><b>🍾 الصراحة ولا التحدي</b><small>لفّا القارورة: حقيقة بصدق أو تحدٍّ بجرأة!</small></span>
+    </button>
   </div>
 
-  <div class="card" id="puzzleCreate">
-    <h2>New puzzle</h2>
-    <label class="file"><input type="file" id="file" accept="image/*"><span id="fileLabel">📷 Choose a photo</span></label>
+  <button id="backToGames" class="backBtn" hidden>→ كل الألعاب</button>
+
+  <div class="card ar" id="guessCreate" dir="rtl" hidden>
+    <h2>رسم وقلع 🤔</h2>
+    <p class="hint gIntro">أحدكما يرسم كلمة سرّية بالفصحى، والآخر يخمّنها قبل أن ينتهي الوقت. ثم تتبادلان الأدوار!</p>
+    <button id="newGuessGame" class="primary">ابدأ لعبة جديدة 🎲</button>
+  </div>
+
+  <div class="card" id="puzzleCreate" hidden>
+    <h2>Puzzle 🧩</h2>
+    <label class="file"><input type="file" id="file" accept="image/*"><span id="fileLabel">📷 اختر صورة</span></label>
     <img id="preview" alt="" hidden>
-    <p class="hint">How many pieces?</p>
+    <p class="hint">كم عدد القطع؟</p>
     <div class="counts" id="counts"></div>
-    <button id="create" class="primary" disabled>Create puzzle</button>
+    <button id="create" class="primary" disabled>أنشئ الأحجية</button>
   </div>
 
   <div class="card" id="colorCreate" hidden>
-    <h2>New coloring page</h2>
-    <label class="file"><input type="file" id="photoFile" accept="image/*"><span id="photoFileLabel">📷 Upload your own photo</span></label>
-    <p class="hint" id="photoHint">Works best on a simple, clear photo — one subject, not too busy.</p>
-    <button id="blankPage" class="primary">✏️ Start on a blank page</button>
-    <label class="file"><input type="file" id="tracePhotoFile" accept="image/*"><span id="tracePhotoLabel">🖼️ Or trace freely over a photo</span></label>
+    <h2>يالاه نلونو 🎨</h2>
+    <label class="file"><input type="file" id="photoFile" accept="image/*"><span id="photoFileLabel">📷 ارفع صورة للتلوين</span></label>
+    <p class="hint" id="photoHint">تعمل أفضل مع صفحة تلوين أو صورة بسيطة وواضحة.</p>
+    <button id="blankPage" class="primary">✏️ ابدأ على صفحة بيضاء</button>
+    <label class="file"><input type="file" id="tracePhotoFile" accept="image/*"><span id="tracePhotoLabel">🖼️ أو ارسم بحرّية فوق صورة</span></label>
   </div>
 
   <div class="card">
-    <h2>Join a room</h2>
+    <h2>انضمّ إلى غرفة</h2>
     <div class="row">
-      <input id="joinCode" placeholder="CODE" maxlength="6" autocomplete="off" autocapitalize="characters">
-      <button id="join">Join</button>
+      <input id="joinCode" dir="ltr" placeholder="الرمز" maxlength="6" autocomplete="off" autocapitalize="characters">
+      <button id="join">انضمّ</button>
     </div>
   </div>
 
   <div class="card">
-    <h2>My rooms</h2>
+    <h2>غرفي</h2>
     <ul id="list"></ul>
   </div>
 
@@ -60,73 +87,105 @@
 <section id="game" hidden>
   <div id="stage"></div>
   <header class="bar">
-    <button id="back" class="icon" aria-label="Back">←</button>
+    <button id="back" class="icon" aria-label="رجوع">→</button>
     <div class="info"><b id="roomCode"></b><span id="progress"></span></div>
     <div id="players"></div>
-    <button id="share" class="icon" aria-label="Invite">💌</button>
+    <button id="share" class="icon" aria-label="ادعُ شريكك">💌</button>
   </header>
   <div class="tools">
-    <button id="ghost" class="icon" aria-label="Show picture">👁</button>
-    <button id="zoomIn" class="icon" aria-label="Zoom in">＋</button>
-    <button id="zoomOut" class="icon" aria-label="Zoom out">－</button>
-    <button id="fit" class="icon" aria-label="Fit">⤢</button>
+    <button id="ghost" class="icon" aria-label="أظهر الصورة">👁</button>
+    <button id="zoomIn" class="icon" aria-label="تكبير">＋</button>
+    <button id="zoomOut" class="icon" aria-label="تصغير">－</button>
+    <button id="fit" class="icon" aria-label="ملاءمة">⤢</button>
   </div>
   <div id="palette" hidden>
     <div class="panel" id="colorSheet" hidden>
-      <div class="panelHead"><button id="closeColor" class="done" aria-label="Done">✓</button><b>Color</b></div>
+      <div class="panelHead"><button id="closeColor" class="done" aria-label="تمّ">✓</button><b>اللون</b></div>
       <div class="ringWrap">
         <div id="hueRing"></div>
         <div id="ringHole"><span id="colorPreview"></span></div>
         <span id="ringKnob"></span>
       </div>
-      <input type="range" id="lightInput" class="shadeSlider" min="8" max="92" value="55" aria-label="Shade">
+      <input type="range" id="lightInput" class="shadeSlider" min="8" max="92" value="55" aria-label="الدرجة">
       <div class="swatchGrid" id="swatchGrid"></div>
-      <p class="panelLabel" id="recentLabel">Recent</p>
+      <p class="panelLabel" id="recentLabel">الأخيرة</p>
       <div class="swatchGrid" id="recentGrid"></div>
     </div>
 
     <div class="panel small" id="brushPop" hidden>
       <div class="brushTypes" id="brushTypeRow">
-        <button id="brushMarker" class="on"><span>🖊️</span>Marker</button>
-        <button id="brushCrayon"><span>🖍️</span>Crayon</button>
-        <button id="brushWater"><span>💧</span>Water</button>
+        <button id="brushMarker" class="on"><span>🖊️</span>قلم</button>
+        <button id="brushCrayon"><span>🖍️</span>شمع</button>
+        <button id="brushWater"><span>💧</span>مائي</button>
       </div>
       <div class="sizeRow">
         <span class="sizePreview"><span id="sizeDot"></span></span>
         <div class="sizeCol">
-          <b id="brushPopTitle">Brush</b>
-          <input type="range" id="brushSizeInput" min="4" max="40" value="12" aria-label="Size">
+          <b id="brushPopTitle">حجم الفرشاة</b>
+          <input type="range" id="brushSizeInput" min="4" max="40" value="12" aria-label="الحجم">
         </div>
       </div>
     </div>
 
     <div class="toolbar">
-      <button id="colorBtn" class="tool" aria-label="Color"><span id="colorChip"></span></button>
-      <button id="pickerBtn" class="tool" aria-label="Pick a color from the picture">
+      <button id="colorBtn" class="tool" aria-label="اللون"><span id="colorChip"></span></button>
+      <button id="pickerBtn" class="tool" aria-label="خذ لونًا من الصورة">
         <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m2 22 1-1h3l9-9"/><path d="M3 21v-3l9-9"/><path d="m15 6 3.4-3.4a2.1 2.1 0 1 1 3 3L18 9l.4.4a2.1 2.1 0 1 1-3 3l-3.8-3.8a2.1 2.1 0 1 1 3-3l.4.4Z"/></svg>
       </button>
-      <button id="toolFill" class="tool" aria-label="Fill">🪣</button>
-      <button id="toolBrush" class="tool" aria-label="Brush">🖌️</button>
-      <button id="eraser" class="tool" aria-label="Eraser">🧽</button>
-      <button id="undoBtn" class="tool" aria-label="Undo">↩️</button>
-      <button id="clearPage" class="tool" aria-label="Clear everything">🗑️</button>
+      <button id="toolFill" class="tool" aria-label="تعبئة">🪣</button>
+      <button id="toolBrush" class="tool" aria-label="فرشاة">🖌️</button>
+      <button id="eraser" class="tool" aria-label="ممحاة">🧽</button>
+      <button id="undoBtn" class="tool" aria-label="تراجع">↩️</button>
+      <button id="clearPage" class="tool" aria-label="امسح الكل">🗑️</button>
+    </div>
+  </div>
+  <div id="puzzleBar" hidden><div id="puzzleFill"><span>🧩</span></div></div>
+  <div id="quizUI" class="ar" dir="rtl" hidden><div id="quizStage"></div></div>
+  <div id="todUI" class="ar" dir="rtl" hidden><div id="todStage"></div></div>
+  <div id="guessUI" class="ar" dir="rtl" hidden>
+    <div id="guessBanner" hidden>
+      <div class="gRow">
+        <div class="gMain">
+          <small id="guessWho"></small>
+          <b id="guessWord"></b>
+          <small id="guessLetters"></small>
+        </div>
+        <span id="guessTimer">90</span>
+      </div>
+      <div class="gFoot">
+        <div id="guessScores"></div>
+        <button id="doneDrawing" type="button" hidden>✓ انتهيت من الرسم</button>
+      </div>
+    </div>
+    <div id="guessFeed"></div>
+    <form id="guessForm" hidden autocomplete="off">
+      <input id="guessInput" placeholder="اكتب تخمينك…" maxlength="30" enterkeyhint="send">
+      <button type="submit">خمّن</button>
+    </form>
+    <div id="guessCard" hidden>
+      <div>
+        <div id="gcEmoji">🎨</div>
+        <h2 id="gcTitle"></h2>
+        <p id="gcText"></p>
+        <button id="gcStart" class="primary"></button>
+      </div>
     </div>
   </div>
   <div id="win" hidden>
     <div>
-      <h2>🎉 Bravo!</h2>
-      <p>You finished it together.</p>
-      <button id="winClose" class="primary">Admire it</button>
+      <h2>🎉 أحسنتما!</h2>
+      <p>أكملتماها معًا.</p>
+      <button id="winClose" class="primary">لنتأمّلها 😍</button>
     </div>
   </div>
 </section>
 
 <div id="nameDlg" class="modal" hidden>
   <div class="card">
-    <h2>Who's playing?</h2>
-    <input id="nameIn" placeholder="Your name" maxlength="16" autocomplete="off">
+    <h2>من يلعب؟</h2>
+    <input id="nameIn" placeholder="اسمك" maxlength="16" autocomplete="off">
     <div id="swatches"></div>
-    <button id="nameOk" class="primary">Let's go</button>
+    <button id="nameOk" class="primary">هيّا بنا</button>
   </div>
 </div>
 

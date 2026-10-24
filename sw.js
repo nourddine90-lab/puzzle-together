@@ -1,8 +1,11 @@
 // Network first, cache as fallback, so updates show up right away but the app still opens offline.
-const CACHE = 'pt-v5';
+const CACHE = 'pt-v10';
 const SHELL = [
   './', 'index.html', 'style.css', 'app.js', 'store.js', 'sound.js', 'firebase-config.js',
-  'manifest.webmanifest', 'konva.min.js', 'icon-192.png', 'icon-512.png',
+  'manifest.webmanifest', 'konva.min.js', 'icon-192.png', 'icon-512.png', 'words.js',
+  'games/puzzle.jpg', 'games/color.jpg', 'games/guess.jpg', 'games/quiz.jpg', 'games/cardback.jpg', 'quiz.js',
+  'tod.js', 'tod-extra.json', 'games/tod.jpg', 'games/truth.jpg', 'games/dare.jpg', 'games/bottle.png', 'games/table.jpg',
+  'sfx/spin.mp3', 'sfx/flip.mp3', 'sfx/cheer.mp3', 'sfx/drumroll.mp3', 'sfx/fail.mp3',
 ];
 
 self.addEventListener('install', (e) => {
